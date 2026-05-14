@@ -39,12 +39,14 @@ class MqttPublisher(BaseMqttPublisher):
 
     def _build_client_kwargs(self, settings: object) -> dict[str, Any]:
         s: PrivateMqttSettings = settings  # type: ignore[assignment]
+        # Use 60s keepalive for MQTT ping/pong to detect stale connections
         return {
             "hostname": s.mqtt_broker_host,
             "port": s.mqtt_broker_port,
             "username": s.mqtt_username or None,
             "password": s.mqtt_password or None,
             "tls_context": self._build_tls_context(s),
+            "keepalive": 60,
         }
 
     def _on_connected(self, settings: object) -> tuple[str, str]:

@@ -117,7 +117,26 @@ class BaseMqttPublisher(ABC):
         if self._client is None or not self.connected:
             return
         try:
+            logger.info("%s publishing to %s", self._integration_label(), topic)
             await self._client.publish(topic, json.dumps(payload), retain=retain)
+        except aiomqtt.MqttCodeError as e:
+            # Code 4 = "not connected" - this is expected during connection startup race conditions.
+            # Silently drop the message as if self.connected was False.
+            if e.rc == 4:
+                logger.debug(
+                    "%s dropping publish during connection handshake (MQTT not ready yet)",
+                    self._integration_label(),
+                )
+                return
+            # Other MQTT errors (authentication, protocol, etc.) - log and mark disconnected
+            logger.warning(
+                "%s publish failed on %s with MQTT error code %s: %s",
+                self._integration_label(),
+                topic,
+                e.rc,
+                e,
+            )
+            self.connected = False
         except Exception as e:
             logger.warning(
                 "%s publish failed on %s. This is usually transient network noise; "
@@ -217,10 +236,19 @@ class BaseMqttPublisher(ABC):
 
                 async with aiomqtt.Client(**client_kwargs) as client:
                     self._client = client
-                    self.connected = True
                     self._last_error = None
                     self._error_notified = False
                     backoff = _BACKOFF_MIN
+
+                    # Give the MQTT connection time to stabilize before marking as connected.
+                    # WebSocket connections need longer (2s) for the full TLS + WS + MQTT handshake.
+                    # TCP connections can use a shorter delay (1s).
+                    # Only set connected=True AFTER this delay to prevent race conditions where
+                    # packets try to publish before MQTT CONNACK completes.
+                    transport = client_kwargs.get("transport", "tcp")
+                    delay = 2.0 if transport == "websockets" else 1.0
+                    await asyncio.sleep(delay)
+                    self.connected = True
 
                     title, detail = self._on_connected(settings)
                     broadcast_success(title, detail)

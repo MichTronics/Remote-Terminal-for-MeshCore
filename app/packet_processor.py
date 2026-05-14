@@ -17,6 +17,7 @@ import logging
 import time
 from itertools import count
 
+from app.database import db
 from app.decoder import (
     DecryptedDirectMessage,
     PacketInfo,
@@ -391,6 +392,15 @@ async def _process_group_text(
     Tries all known channel keys to decrypt.
     Creates a message entry if successful (or adds path to existing if duplicate).
     """
+    # Update last_seen for contacts found in the packet path
+    if packet_info and packet_info.path:
+        await _update_last_seen_for_path_hops(
+            packet_info.path.hex(),
+            packet_info.path_length,
+            packet_info.path_hash_size,
+            timestamp,
+        )
+
     # Try to decrypt with all known channel keys
     channels = await ChannelRepository.get_all()
 
@@ -462,6 +472,15 @@ async def _process_advertisement(
 
     new_path_len = packet_info.path_length
     new_path_hex = packet_info.path.hex() if packet_info.path else ""
+
+    # Update last_seen for contacts found in the packet path (intermediate hops)
+    if packet_info.path:
+        await _update_last_seen_for_path_hops(
+            new_path_hex,
+            new_path_len,
+            packet_info.path_hash_size,
+            timestamp,
+        )
 
     # Try to find existing contact
     existing = await ContactRepository.get_by_key(advert.public_key.lower())
@@ -589,6 +608,15 @@ async def _process_direct_message(
         packet_info = parse_packet(raw_bytes)
     if packet_info is None or packet_info.payload is None:
         return None
+
+    # Update last_seen for contacts found in the packet path
+    if packet_info.path:
+        await _update_last_seen_for_path_hops(
+            packet_info.path.hex(),
+            packet_info.path_length,
+            packet_info.path_hash_size,
+            timestamp,
+        )
 
     # Extract src_hash from payload (second byte: [dest_hash:1][src_hash:1][MAC:2][ciphertext])
     if len(packet_info.payload) < 4:
@@ -726,6 +754,15 @@ async def _process_path_packet(
     if packet_info is None or packet_info.payload is None or len(packet_info.payload) < 4:
         return
 
+    # Update last_seen for contacts found in the packet path
+    if packet_info.path:
+        await _update_last_seen_for_path_hops(
+            packet_info.path.hex(),
+            packet_info.path_length,
+            packet_info.path_hash_size,
+            timestamp,
+        )
+
     dest_hash = format(packet_info.payload[0], "02x").lower()
     src_hash = format(packet_info.payload[1], "02x").lower()
     our_first_byte = format(our_public_key[0], "02x").lower()
@@ -791,4 +828,107 @@ async def _process_path_packet(
 
     logger.debug(
         "Could not decrypt PATH packet with any of %d candidate contacts", len(candidate_contacts)
+    )
+
+
+async def _update_last_seen_for_path_hops(
+    path_hex: str,
+    hop_count: int,
+    hash_size: int,
+    timestamp: int,
+) -> None:
+    """
+    Update last_seen timestamps for contacts found in a packet's path.
+
+    When we receive a packet that traveled through intermediate hops, those
+    hops are evidence of active contacts on the network. This function
+    extracts hop identifiers from the path and updates last_seen for any
+    matching contacts we already know about.
+
+    Hash size determines hop identifier length:
+    - hash_size=1 (1-byte): "75" matches contacts starting with "75..."
+    - hash_size=2 (2-byte): "75D1" matches contacts starting with "75D1..."
+    - hash_size=3 (3-byte): "75D101" matches contacts starting with "75D101..."
+
+    Args:
+        path_hex: Hex-encoded path bytes (e.g., "75D1AB23" for 2 hops in 2-byte mode)
+        hop_count: Number of hops
+        hash_size: Bytes per hop identifier (1, 2, or 3)
+        timestamp: Unix timestamp for last_seen update
+    """
+    if not path_hex or hop_count <= 0 or hash_size < 1 or hash_size > 3:
+        return
+
+    from app.path_utils import split_path_hex
+
+    # Extract individual hop identifiers
+    # For hash_size=2, hop_count=2: "75D1AB23" → ["75D1", "AB23"]
+    hop_identifiers = split_path_hex(path_hex, hop_count)
+    if not hop_identifiers:
+        return
+
+    matched_keys: set[str] = set()
+
+    # Validate hop identifier length based on hash_size
+    expected_prefix_len = hash_size * 2  # 1-byte=2 chars, 2-byte=4 chars, 3-byte=6 chars
+
+    # For 1-byte mode: use efficient indexed query per hop
+    # For 2-byte/3-byte mode: load all contacts and match in memory (fewer matches)
+    if hash_size == 1:
+        # Optimize for 1-byte mode using indexed query
+        for hop_id in hop_identifiers:
+            if not hop_id or len(hop_id) != expected_prefix_len:
+                continue
+
+            # Use indexed query on first byte (2 hex chars)
+            candidates = await ContactRepository.get_by_pubkey_first_byte(hop_id.lower())
+            for contact in candidates:
+                matched_keys.add(contact.public_key)
+    else:
+        # For 2-byte and 3-byte modes, load all contacts once and match in memory
+        # This is more efficient since longer prefixes will have fewer matches
+        all_contacts = await ContactRepository.get_all(limit=10000)
+        if not all_contacts:
+            return
+
+        for hop_id in hop_identifiers:
+            if not hop_id or len(hop_id) != expected_prefix_len:
+                continue
+
+            hop_prefix = hop_id.lower()
+
+            # Find contacts whose public key starts with this hop identifier
+            for contact in all_contacts:
+                if contact.public_key.lower().startswith(hop_prefix):
+                    matched_keys.add(contact.public_key)
+
+    # Update last_seen for all matched contacts and broadcast to frontend
+    if not matched_keys:
+        return
+
+    for public_key in matched_keys:
+        await ContactRepository.touch_last_seen(public_key, timestamp)
+
+    # Batch-fetch updated contacts and broadcast to frontend for real-time Map panel updates
+    # This ensures the Node Map panel shows updated "last seen" times immediately
+    async with db.readonly() as conn:
+        placeholders = ",".join("?" * len(matched_keys))
+        async with conn.execute(
+            f"SELECT * FROM contacts WHERE public_key IN ({placeholders})",
+            tuple(matched_keys),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+    for row in rows:
+        contact = ContactRepository._row_to_contact(row)
+        broadcast_event("contact", contact.model_dump())
+
+    logger.info(
+        "Updated last_seen for %d contact%s from %d-byte path (%d hop%s: %s)",
+        len(matched_keys),
+        "s" if len(matched_keys) != 1 else "",
+        hash_size,
+        hop_count,
+        "s" if hop_count != 1 else "",
+        ", ".join(hop_identifiers[:3]) + ("..." if len(hop_identifiers) > 3 else ""),
     )

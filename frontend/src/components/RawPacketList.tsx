@@ -1,12 +1,14 @@
-import { useEffect, useRef, useMemo } from 'react';
-import type { Channel, RawPacket } from '../types';
+import { useEffect, useRef, useMemo, useState } from 'react';
+import type { Channel, RawPacket, Region } from '../types';
 import { getRawPacketObservationKey } from '../utils/rawPacketIdentity';
 import { createDecoderOptions, decodePacketSummary } from '../utils/rawPacketInspector';
+import { identifyPacketRegion } from '../utils/regionIdentifier';
 import { cn } from '@/lib/utils';
 
 interface RawPacketListProps {
   packets: RawPacket[];
   channels?: Channel[];
+  regions?: Region[];
   onPacketClick?: (packet: RawPacket) => void;
 }
 
@@ -30,7 +32,7 @@ function formatTransportCodes(transportCodes: string): string {
   return `${primary} ${secondary}`;
 }
 
-function formatSignalInfo(packet: RawPacket): string {
+function formatSignalInfo(packet: RawPacket, identifiedRegion?: string | null): string {
   const parts: string[] = [];
   if (packet.snr !== null && packet.snr !== undefined) {
     parts.push(`SNR: ${packet.snr.toFixed(1)} dB`);
@@ -38,7 +40,12 @@ function formatSignalInfo(packet: RawPacket): string {
   if (packet.rssi !== null && packet.rssi !== undefined) {
     parts.push(`RSSI: ${packet.rssi} dBm`);
   }
-  if (packet.transport_codes) {
+  // Prefer client-side identified region, then stored region_name, then hex codes
+  if (identifiedRegion) {
+    parts.push(`Region: ${identifiedRegion}`);
+  } else if (packet.region_name) {
+    parts.push(`Region: ${packet.region_name}`);
+  } else if (packet.transport_codes) {
     parts.push(`Region: ${formatTransportCodes(packet.transport_codes)}`);
   }
   return parts.join(' | ');
@@ -76,9 +83,37 @@ function getRouteTypeLabel(routeType: string): string {
   }
 }
 
-export function RawPacketList({ packets, channels, onPacketClick }: RawPacketListProps) {
+export function RawPacketList({ packets, channels, regions, onPacketClick }: RawPacketListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const decoderOptions = useMemo(() => createDecoderOptions(channels), [channels]);
+
+  // Track client-side identified region names per packet observation_id
+  const [identifiedRegions, setIdentifiedRegions] = useState<Map<number, string | null>>(new Map());
+
+  // Identify regions for packets with transport codes
+  useEffect(() => {
+    if (!regions || regions.length === 0) return;
+
+    const identifyRegions = async () => {
+      const newIdentifications = new Map<number, string | null>();
+
+      for (const packet of packets) {
+        // Skip if already identified or no transport codes
+        if (!packet.transport_codes || identifiedRegions.has(packet.observation_id ?? packet.id)) {
+          continue;
+        }
+
+        const regionName = await identifyPacketRegion(packet.data, regions);
+        newIdentifications.set(packet.observation_id ?? packet.id, regionName);
+      }
+
+      if (newIdentifications.size > 0) {
+        setIdentifiedRegions((prev) => new Map([...prev, ...newIdentifications]));
+      }
+    };
+
+    identifyRegions();
+  }, [packets, regions, identifiedRegions]);
 
   // Decode all packets (memoized to avoid re-decoding on every render)
   const decodedPackets = useMemo(() => {
@@ -114,6 +149,7 @@ export function RawPacketList({ packets, channels, onPacketClick }: RawPacketLis
       ref={listRef}
     >
       {sortedPackets.map(({ packet, decoded }) => {
+        const identifiedRegion = identifiedRegions.get(packet.observation_id ?? packet.id);
         const cardContent = (
           <>
             <div className="flex items-center gap-2">
@@ -152,7 +188,7 @@ export function RawPacketList({ packets, channels, onPacketClick }: RawPacketLis
             {/* Signal info */}
             {(packet.snr !== null || packet.rssi !== null || packet.transport_codes) && (
               <div className="text-[0.6875rem] text-muted-foreground mt-0.5 tabular-nums">
-                {formatSignalInfo(packet)}
+                {formatSignalInfo(packet, identifiedRegion)}
               </div>
             )}
 

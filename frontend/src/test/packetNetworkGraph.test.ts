@@ -79,6 +79,7 @@ function createPacket(data: string): RawPacket {
     snr: null,
     rssi: null,
     transport_codes: null,
+    region_name: null,
     decrypted: false,
     decrypted_info: null,
   };

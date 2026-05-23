@@ -384,10 +384,45 @@ class PathHashWidthStats(BaseModel):
     triple_byte_pct: float = 0.0
 
 
+class Region(BaseModel):
+    """MeshCore transport region configuration."""
+
+    id: int
+    name: str = Field(description="Region identifier (e.g., 'us', 'nl', 'bayarea', 'nl-fr')")
+    key: str | None = Field(
+        default=None,
+        description="Hex-encoded 16-byte region key (NULL for public/derived regions)",
+    )
+    is_public: bool = Field(
+        default=True,
+        description="True if region key is derived from name, False for custom key",
+    )
+    created_at: int
+
+
+class RegionCreate(BaseModel):
+    """Request payload for creating a new region."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=50,
+        description="Region identifier (e.g., 'us', 'nl-fr', 'bayarea')",
+    )
+    key: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-fA-F]{32}$",
+        description="Hex-encoded 16-byte region key (omit for public/derived regions)",
+    )
+    is_public: bool = Field(
+        default=True,
+        description="True to derive key from name, False to use explicit key",
+    )
+
+
 class RegionUsageItem(BaseModel):
     """A single region usage count."""
 
-    region: str  # Primary region hex (2 bytes, e.g., "FFFF")
+    region: str  # Region name (e.g., "us", "nl") or hex code if unidentified (e.g., "FFFF")
     count: int
 
 
@@ -506,6 +541,12 @@ class RawPacketDetail(BaseModel):
     )
     transport_codes: str | None = Field(
         default=None, description="Hex-encoded 4-byte transport/region codes for TRANSPORT routes"
+    )
+    region_name: str | None = Field(
+        default=None, description="Identified region name (e.g., 'us', 'nl') if matched against known regions"
+    )
+    region_name: str | None = Field(
+        default=None, description="Identified region name (e.g., 'us', 'nl') if matched against known regions"
     )
     decrypted: bool = False
     decrypted_info: RawPacketDecryptedInfo | None = None

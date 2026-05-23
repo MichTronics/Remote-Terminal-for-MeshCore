@@ -113,7 +113,14 @@ async def get_raw_packet(packet_id: int) -> RawPacketDetail:
     if packet_row is None:
         raise HTTPException(status_code=404, detail="Raw packet not found")
 
-    stored_packet_id, packet_data, packet_timestamp, message_id, transport_codes_bytes = packet_row
+    (
+        stored_packet_id,
+        packet_data,
+        packet_timestamp,
+        message_id,
+        transport_codes_bytes,
+        region_name,
+    ) = packet_row
     packet_info = parse_packet(packet_data)
     payload_type_name = packet_info.payload_type.name if packet_info else "Unknown"
 
@@ -145,6 +152,7 @@ async def get_raw_packet(packet_id: int) -> RawPacketDetail:
         data=packet_data.hex(),
         payload_type=payload_type_name,
         transport_codes=transport_codes_bytes.hex() if transport_codes_bytes else None,
+        region_name=region_name,
         decrypted=message_id is not None,
         decrypted_info=decrypted_info,
     )

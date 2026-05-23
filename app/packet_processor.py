@@ -152,6 +152,44 @@ def packet_matches_meshcore_region(
     return expected == observed
 
 
+async def identify_packet_region(packet_info: PacketInfo) -> str | None:
+    """Identify which region a packet belongs to by testing against all known regions.
+    
+    Returns the region name if a match is found, None otherwise.
+    """
+    if packet_info.transport_codes is None or len(packet_info.transport_codes) < 2:
+        return None
+    if packet_info.payload is None or packet_info.payload_type is None:
+        return None
+
+    from app.repository import RegionRepository
+
+    # Get all known regions
+    regions = await RegionRepository.get_all()
+    
+    # Test packet against each region
+    for region in regions:
+        region_key_bytes = None
+        if region.key:
+            # Custom region with explicit key
+            region_key_bytes = bytes.fromhex(region.key)
+        elif region.is_public:
+            # Public region - derive key from name
+            region_key_bytes = derive_meshcore_region_key(region.name)
+        else:
+            # Invalid state - public flag False but no key stored
+            continue
+            
+        if packet_matches_meshcore_region(
+            packet_info,
+            region_name=None,
+            region_key=region_key_bytes,
+        ):
+            return region.name
+    
+    return None
+
+
 async def create_message_from_decrypted(
     packet_id: int,
     channel_key: str,
@@ -383,8 +421,13 @@ async def process_raw_packet(
     payload_type_name = payload_type.name if payload_type else "Unknown"
     transport_codes = packet_info.transport_codes if packet_info else None
 
+    # Identify region if transport codes are present
+    region_name = None
+    if packet_info and transport_codes:
+        region_name = await identify_packet_region(packet_info)
+
     packet_id, is_new_packet = await RawPacketRepository.create(
-        raw_bytes, ts, transport_codes=transport_codes
+        raw_bytes, ts, transport_codes=transport_codes, region_name=region_name
     )
     raw_hex = raw_bytes.hex()
 
@@ -413,6 +456,7 @@ async def process_raw_packet(
         "snr": snr,
         "rssi": rssi,
         "transport_codes": transport_codes.hex() if transport_codes else None,
+        "region_name": region_name,
         "decrypted": False,
         "message_id": None,
         "channel_name": None,
@@ -457,6 +501,7 @@ async def process_raw_packet(
         snr=snr,
         rssi=rssi,
         transport_codes=transport_codes.hex() if transport_codes else None,
+        region_name=region_name,
         decrypted=result["decrypted"],
         decrypted_info=RawPacketDecryptedInfo(
             channel_name=result["channel_name"],

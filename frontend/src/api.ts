@@ -24,6 +24,7 @@ import type {
   RadioDiscoveryTarget,
   PathDiscoveryResponse,
   PushSubscriptionInfo,
+  Region,
   ResendChannelMessageResponse,
   RepeaterAclResponse,
   RepeaterAdvertIntervalsResponse,
@@ -317,6 +318,9 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(settings),
     }),
+
+  // Regions
+  getRegions: () => fetchJson<Region[]>('/settings/regions'),
 
   // Block lists
   toggleBlockedKey: (key: string) =>

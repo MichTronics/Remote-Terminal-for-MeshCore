@@ -234,6 +234,14 @@ export interface Channel {
   muted: boolean;
 }
 
+export interface Region {
+  id: number;
+  name: string;
+  key: string; // 32-character hex (16 bytes)
+  is_public: boolean;
+  created_at: number;
+}
+
 export interface ChannelMessageCounts {
   last_1h: number;
   last_24h: number;
@@ -354,6 +362,7 @@ export interface RawPacket {
   snr: number | null; // Signal-to-noise ratio in dB
   rssi: number | null; // Received signal strength in dBm
   transport_codes: string | null; // Hex-encoded 4-byte transport/region codes for TRANSPORT routes
+  region_name: string | null; // Identified region name (e.g., 'us', 'nl') if matched against known regions
   decrypted: boolean;
   decrypted_info: {
     channel_name: string | null;

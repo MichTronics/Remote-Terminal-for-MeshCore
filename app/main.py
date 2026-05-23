@@ -71,6 +71,7 @@ from app.routers import (
     push,
     radio,
     read_state,
+    regions,
     repeaters,
     rooms,
     settings,
@@ -118,6 +119,12 @@ async def lifespan(app: FastAPI):
     from app.radio_sync import ensure_default_channels
 
     await ensure_default_channels()
+
+    # Seed default MeshCore transport regions
+    from app.routers.regions import seed_default_regions
+
+    await seed_default_regions()
+
     await start_radio_stats_sampling()
 
     # Always start connection monitor (even if initial connection failed)
@@ -216,6 +223,7 @@ app.include_router(messages.router, prefix="/api")
 app.include_router(packets.router, prefix="/api")
 app.include_router(read_state.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(regions.router, prefix="/api")
 app.include_router(statistics.router, prefix="/api")
 app.include_router(push.router, prefix="/api")
 app.include_router(ws.router, prefix="/api")

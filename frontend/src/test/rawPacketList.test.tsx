@@ -13,6 +13,7 @@ function createPacket(overrides: Partial<RawPacket> = {}): RawPacket {
     snr: null,
     rssi: null,
     transport_codes: null,
+    region_name: null,
     decrypted: false,
     decrypted_info: null,
     ...overrides,

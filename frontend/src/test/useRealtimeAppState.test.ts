@@ -295,6 +295,7 @@ describe('useRealtimeAppState', () => {
       snr: 7.5,
       rssi: -80,
       transport_codes: null,
+      region_name: null,
       decrypted: false,
       decrypted_info: null,
     };

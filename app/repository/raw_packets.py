@@ -14,7 +14,10 @@ UNDECRYPTED_PACKET_BATCH_SIZE = 500
 class RawPacketRepository:
     @staticmethod
     async def create(
-        data: bytes, timestamp: int | None = None, transport_codes: bytes | None = None
+        data: bytes,
+        timestamp: int | None = None,
+        transport_codes: bytes | None = None,
+        region_name: str | None = None,
     ) -> tuple[int, bool]:
         """
         Create a raw packet with payload-based deduplication.
@@ -38,9 +41,9 @@ class RawPacketRepository:
 
         async with db.tx() as conn:
             async with conn.execute(
-                "INSERT OR IGNORE INTO raw_packets (timestamp, data, payload_hash, transport_codes) "
-                "VALUES (?, ?, ?, ?)",
-                (ts, data, payload_hash, transport_codes),
+                "INSERT OR IGNORE INTO raw_packets (timestamp, data, payload_hash, transport_codes, region_name) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (ts, data, payload_hash, transport_codes, region_name),
             ) as cursor:
                 rowcount = cursor.rowcount
                 lastrowid = cursor.lastrowid
@@ -169,11 +172,14 @@ class RawPacketRepository:
         return row["message_id"]
 
     @staticmethod
-    async def get_by_id(packet_id: int) -> tuple[int, bytes, int, int | None, bytes | None] | None:
-        """Return a raw packet row as (id, data, timestamp, message_id, transport_codes)."""
+    async def get_by_id(
+        packet_id: int,
+    ) -> tuple[int, bytes, int, int | None, bytes | None, str | None] | None:
+        """Return a raw packet row as (id, data, timestamp, message_id, transport_codes, region_name)."""
         async with db.readonly() as conn:
             async with conn.execute(
-                "SELECT id, data, timestamp, message_id, transport_codes FROM raw_packets WHERE id = ?",
+                "SELECT id, data, timestamp, message_id, transport_codes, region_name "
+                "FROM raw_packets WHERE id = ?",
                 (packet_id,),
             ) as cursor:
                 row = await cursor.fetchone()
@@ -186,6 +192,7 @@ class RawPacketRepository:
             row["timestamp"],
             row["message_id"],
             transport_codes_bytes,
+            row["region_name"],
         )
 
     @staticmethod

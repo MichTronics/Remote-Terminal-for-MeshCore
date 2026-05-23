@@ -296,32 +296,25 @@ def bucket_path_hash_widths(rows: Iterable) -> dict[str, int | float]:
 
 
 def bucket_primary_regions(rows: Iterable) -> dict[str, int | list]:
-    """Bucket raw packet rows by primary transport region (bytes 0-1) and return top regions with counts.
+    """Bucket raw packet rows by identified region name and return top regions with counts.
 
-    *rows* must be an already-fetched list whose elements have a ``transport_codes``
-    column containing 4-byte transport codes (or None).
+    *rows* must be an already-fetched list whose elements have a ``region_name``
+    column containing the identified region name (or None).
 
     Returns dict with:
-    - total_packets: total packets with transport codes (excludes None and 0000)
-    - regions: list of {"region": "FFFF", "count": 123} sorted by count descending
+    - total_packets: total packets with identified regions (excludes None)
+    - regions: list of {"region": "us", "count": 123} sorted by count descending
     """
     from collections import Counter
 
     region_counts: Counter[str] = Counter()
     
     for row in rows:
-        transport_codes = row["transport_codes"]
-        if transport_codes is None or len(transport_codes) < 2:
-            continue
-        
-        # Extract primary region (first 2 bytes)
-        primary = transport_codes[:2].hex().upper()
-        
-        # Skip if all zeros
-        if primary == "0000":
+        region_name = row["region_name"]
+        if region_name is None:
             continue
             
-        region_counts[primary] += 1
+        region_counts[region_name] += 1
     
     # Convert to sorted list (most common first)
     regions = [

@@ -17,6 +17,7 @@ import type {
   RadioConfig,
   RadioTraceHopRequest,
   RadioTraceResponse,
+  Region,
 } from '../types';
 import type { RawPacketStatsSessionState } from '../utils/rawPacketStats';
 import { CONTACT_TYPE_REPEATER, CONTACT_TYPE_ROOM } from '../types';
@@ -39,6 +40,7 @@ interface ConversationPaneProps {
   contacts: Contact[];
   channels: Channel[];
   rawPackets: RawPacket[];
+  regions?: Region[];
   rawPacketStatsSession: RawPacketStatsSessionState;
   config: RadioConfig | null;
   health: HealthStatus | null;
@@ -124,6 +126,7 @@ export function ConversationPane({
   contacts,
   channels,
   rawPackets,
+  regions,
   rawPacketStatsSession,
   config,
   health,
@@ -248,6 +251,7 @@ export function ConversationPane({
         rawPacketStatsSession={rawPacketStatsSession}
         contacts={contacts}
         channels={channels}
+        regions={regions}
       />
     );
   }

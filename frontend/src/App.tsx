@@ -31,6 +31,7 @@ import type {
   Conversation,
   Message,
   RawPacket,
+  Region,
 } from './types';
 import { CONTACT_TYPE_REPEATER, CONTACT_TYPE_ROOM } from './types';
 import { shouldAutoFocusInput } from './utils/autoFocusInput';
@@ -91,6 +92,7 @@ export function App() {
 
   const messageInputRef = useRef<MessageInputHandle>(null);
   const [rawPackets, setRawPackets] = useState<RawPacket[]>([]);
+  const [regions, setRegions] = useState<Region[]>([]);
   const [channelUnreadMarker, setChannelUnreadMarker] = useState<ChannelUnreadMarker | null>(null);
   const [newMessagePrefillRequest, setNewMessagePrefillRequest] =
     useState<NewMessagePrefillRequest | null>(null);
@@ -174,6 +176,13 @@ export function App() {
   useEffect(() => {
     myNameRef.current = config?.name ?? null;
   }, [config?.name]);
+
+  // Load regions for client-side packet identification
+  useEffect(() => {
+    api.getRegions().then(setRegions).catch((err) => {
+      console.error('Failed to load regions:', err);
+    });
+  }, []);
 
   // Keep block lists in refs for WS callback filtering
   const blockedKeysRef = useRef<string[]>([]);
@@ -593,6 +602,7 @@ export function App() {
     contacts,
     channels,
     rawPackets,
+    regions,
     rawPacketStatsSession,
     config,
     health,

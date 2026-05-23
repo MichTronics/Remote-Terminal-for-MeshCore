@@ -509,13 +509,13 @@ class StatisticsRepository:
 
     @staticmethod
     async def _primary_regions_24h() -> dict[str, int | list]:
-        """Count primary transport regions from the last 24h of raw packets."""
+        """Count identified transport regions from the last 24h of raw packets."""
         from app.path_utils import bucket_primary_regions
 
         now = int(time.time())
         async with db.readonly() as conn:
             async with conn.execute(
-                "SELECT transport_codes FROM raw_packets WHERE timestamp >= ? AND transport_codes IS NOT NULL",
+                "SELECT region_name FROM raw_packets WHERE timestamp >= ? AND region_name IS NOT NULL",
                 (now - SECONDS_24H,),
             ) as cursor:
                 rows = await cursor.fetchall()

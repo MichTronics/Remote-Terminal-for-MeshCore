@@ -89,6 +89,7 @@ describe('buildRawPacketStatsSnapshot', () => {
       snr: 4,
       rssi: -72,
       transport_codes: null,
+      region_name: null,
       decrypted: true,
       decrypted_info: {
         channel_name: null,
@@ -116,6 +117,7 @@ describe('buildRawPacketStatsSnapshot', () => {
       snr: 4,
       rssi: -72,
       transport_codes: null,
+      region_name: null,
       decrypted: false,
       decrypted_info: null,
     };

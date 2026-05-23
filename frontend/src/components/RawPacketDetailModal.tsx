@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChannelCrypto, PayloadType } from '@michaelhart/meshcore-decoder';
 
-import type { Channel, RawPacket } from '../types';
+import type { Channel, RawPacket, Region } from '../types';
 import { cn } from '@/lib/utils';
 import {
   createDecoderOptions,
   inspectRawPacketWithOptions,
   type PacketByteField,
 } from '../utils/rawPacketInspector';
+import { identifyPacketRegion } from '../utils/regionIdentifier';
 import { toast } from './ui/sonner';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
@@ -15,6 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 interface RawPacketDetailModalProps {
   packet: RawPacket | null;
   channels: Channel[];
+  regions?: Region[];
   onClose: () => void;
 }
 
@@ -44,6 +46,7 @@ interface RawPacketInspectorDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   channels: Channel[];
+  regions?: Region[];
   source: RawPacketInspectorDialogSource;
   title: string;
   description: string;
@@ -55,6 +58,7 @@ interface RawPacketInspectionPanelProps {
   packet: RawPacket;
   signalOverride?: SignalOverride;
   channels: Channel[];
+  regions?: Region[];
 }
 
 interface FieldPaletteEntry {
@@ -149,14 +153,22 @@ function formatTransportCodesForDetail(transportCodes: string): string {
 
 function formatSignal(
   packet: RawPacket,
-  signalOverride?: SignalOverride
+  signalOverride?: SignalOverride,
+  identifiedRegion?: string | null
 ): { lines: string[]; label: string } {
   const rssi = signalOverride?.rssi ?? packet.rssi;
   const snr = signalOverride?.snr ?? packet.snr;
   const lines: string[] = [];
   if (rssi !== null) lines.push(`${rssi} dBm RSSI`);
   if (snr !== null) lines.push(`${snr.toFixed(1)} dB SNR`);
-  if (packet.transport_codes) lines.push(`Region: ${formatTransportCodesForDetail(packet.transport_codes)}`);
+  // Prefer client-side identified region, then stored region_name, then hex codes
+  if (identifiedRegion) {
+    lines.push(`Region: ${identifiedRegion}`);
+  } else if (packet.region_name) {
+    lines.push(`Region: ${packet.region_name}`);
+  } else if (packet.transport_codes) {
+    lines.push(`Region: ${formatTransportCodesForDetail(packet.transport_codes)}`);
+  }
   const isOverride =
     signalOverride != null && (signalOverride.rssi != null || signalOverride.snr != null);
   return {
@@ -452,6 +464,7 @@ function buildPastedRawPacket(packetHex: string): RawPacket {
     snr: null,
     rssi: null,
     transport_codes: null,
+    region_name: null,
     decrypted: false,
     decrypted_info: null,
   };
@@ -606,6 +619,7 @@ function FieldSection({
 export function RawPacketInspectionPanel({
   packet,
   channels,
+  regions,
   signalOverride,
 }: RawPacketInspectionPanelProps) {
   const decoderOptions = useMemo(() => createDecoderOptions(channels), [channels]);
@@ -618,6 +632,17 @@ export function RawPacketInspectionPanel({
     [decoderOptions, packet]
   );
   const [hoveredFieldId, setHoveredFieldId] = useState<string | null>(null);
+  const [identifiedRegion, setIdentifiedRegion] = useState<string | null>(null);
+
+  // Identify region for this packet
+  useEffect(() => {
+    if (!regions || !packet.transport_codes) {
+      setIdentifiedRegion(null);
+      return;
+    }
+
+    identifyPacketRegion(packet.data, regions).then(setIdentifiedRegion);
+  }, [packet, regions]);
 
   const packetDisplayFields = useMemo(
     () => inspection.packetFields.filter((field) => field.name !== 'Payload'),
@@ -694,7 +719,7 @@ export function RawPacketInspectionPanel({
             />
           ) : null}
           {(() => {
-            const sig = formatSignal(packet, signalOverride);
+            const sig = formatSignal(packet, signalOverride, identifiedRegion);
             return (
               <div className="rounded-lg border border-border/70 bg-card/70 p-2.5">
                 <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">
@@ -776,6 +801,7 @@ export function RawPacketInspectorDialog({
   open,
   onOpenChange,
   channels,
+  regions,
   source,
   title,
   description,
@@ -809,6 +835,7 @@ export function RawPacketInspectorDialog({
       <RawPacketInspectionPanel
         packet={source.packet}
         channels={channels}
+        regions={regions}
         signalOverride={signalOverride}
       />
     );
@@ -834,7 +861,7 @@ export function RawPacketInspectorDialog({
           </div>
         </div>
         {analyzedPacket ? (
-          <RawPacketInspectionPanel packet={analyzedPacket} channels={channels} />
+          <RawPacketInspectionPanel packet={analyzedPacket} channels={channels} regions={regions} />
         ) : (
           <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
             Paste a packet above to inspect it.
@@ -878,7 +905,7 @@ export function RawPacketInspectorDialog({
   );
 }
 
-export function RawPacketDetailModal({ packet, channels, onClose }: RawPacketDetailModalProps) {
+export function RawPacketDetailModal({ packet, channels, regions, onClose }: RawPacketDetailModalProps) {
   if (!packet) {
     return null;
   }
@@ -888,6 +915,7 @@ export function RawPacketDetailModal({ packet, channels, onClose }: RawPacketDet
       open={packet !== null}
       onOpenChange={(isOpen) => !isOpen && onClose()}
       channels={channels}
+      regions={regions}
       source={{ kind: 'packet', packet }}
       title="Packet Details"
       description="Detailed byte and field breakdown for the selected raw packet."

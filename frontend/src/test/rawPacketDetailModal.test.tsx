@@ -37,6 +37,7 @@ const BOT_PACKET: RawPacket = {
   rssi: -72,
   snr: 5.5,
   transport_codes: null,
+  region_name: null,
   decrypted_info: null,
 };
 
@@ -51,6 +52,7 @@ const SCOPED_PACKET: RawPacket = {
   rssi: -80,
   snr: 3.0,
   transport_codes: null,
+  region_name: null,
   decrypted_info: null,
 };
 

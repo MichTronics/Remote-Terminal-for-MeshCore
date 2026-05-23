@@ -13,6 +13,8 @@ are offloaded from the radio to the server.
 """
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import time
 from itertools import count
@@ -59,6 +61,95 @@ from app.websocket import broadcast_error, broadcast_event
 logger = logging.getLogger(__name__)
 
 _raw_observation_counter = count(1)
+
+
+def derive_meshcore_region_key(region_name: str) -> bytes:
+    """Derive a MeshCore public region transport key from a region name.
+
+    MeshCore derives public/auto region transport keys by SHA-256 hashing the
+    hashtag region name and taking the first 16 bytes.
+
+    Examples:
+    - "bayarea" -> SHA256(b"#bayarea")[:16]
+    - "#bayarea" -> SHA256(b"#bayarea")[:16]
+
+    Private regions prefixed with "$" are not derivable from the region name and
+    require the actual stored transport key.
+    """
+    normalized = region_name if region_name.startswith("#") else f"#{region_name}"
+    digest = hashlib.sha256(normalized.encode("utf-8")).digest()
+    return digest[:16]
+
+
+def calculate_meshcore_transport_code(
+    payload_type: int,
+    payload: bytes,
+    region_name: str | None = None,
+    region_key: bytes | None = None,
+) -> int:
+    """Reproduce MeshCore TransportKey::calcTransportCode() in Python.
+
+    The transport code is computed as:
+    - HMAC-SHA256(key=16-byte region key, message=payload_type_byte + payload)
+    - take the first 2 bytes of the MAC as a little-endian uint16_t
+    - remap reserved values 0x0000 -> 0x0001 and 0xFFFF -> 0xFFFE
+
+    Args:
+        payload_type: MeshCore payload type value (lower 4 bits from header type field).
+        payload: Raw payload bytes.
+        region_name: Public region name to derive a key from (e.g. "bayarea" or "#bayarea").
+        region_key: Explicit 16-byte transport key. Use this for private regions.
+
+    Returns:
+        16-bit transport code as an int.
+    """
+    if region_key is None:
+        if region_name is None:
+            raise ValueError("Either region_name or region_key must be provided")
+        region_key = derive_meshcore_region_key(region_name)
+
+    if len(region_key) != 16:
+        raise ValueError("region_key must be exactly 16 bytes")
+
+    message = bytes([payload_type & 0xFF]) + payload
+    mac = hmac.new(region_key, message, hashlib.sha256).digest()
+
+    # MeshCore writes the first two HMAC bytes directly into a uint16_t buffer.
+    # On supported MCUs this is effectively little-endian.
+    code = int.from_bytes(mac[:2], "little")
+
+    if code == 0x0000:
+        code = 0x0001
+    elif code == 0xFFFF:
+        code = 0xFFFE
+
+    return code
+
+
+def packet_matches_meshcore_region(
+    packet_info: PacketInfo,
+    region_name: str | None = None,
+    region_key: bytes | None = None,
+) -> bool:
+    """Return True if packet_info matches the provided MeshCore region scope.
+
+    This compares packet transport_codes[0:2] against the transport code computed
+    from the packet payload type and payload using the provided public region name
+    or explicit 16-byte region key.
+    """
+    if packet_info.transport_codes is None or len(packet_info.transport_codes) < 2:
+        return False
+    if packet_info.payload is None or packet_info.payload_type is None:
+        return False
+
+    expected = calculate_meshcore_transport_code(
+        payload_type=int(packet_info.payload_type),
+        payload=packet_info.payload,
+        region_name=region_name,
+        region_key=region_key,
+    )
+    observed = int.from_bytes(packet_info.transport_codes[:2], "little")
+    return expected == observed
 
 
 async def create_message_from_decrypted(

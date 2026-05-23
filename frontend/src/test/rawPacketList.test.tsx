@@ -12,6 +12,7 @@ function createPacket(overrides: Partial<RawPacket> = {}): RawPacket {
     payload_type: 'REQ',
     snr: null,
     rssi: null,
+    transport_codes: null,
     decrypted: false,
     decrypted_info: null,
     ...overrides,

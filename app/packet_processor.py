@@ -286,13 +286,16 @@ async def process_raw_packet(
     ts = timestamp or int(time.time())
     observation_id = next(_raw_observation_counter)
 
-    packet_id, is_new_packet = await RawPacketRepository.create(raw_bytes, ts)
-    raw_hex = raw_bytes.hex()
-
-    # Parse packet to get type
+    # Parse packet to get type and transport codes
     packet_info = parse_packet(raw_bytes)
     payload_type = packet_info.payload_type if packet_info else None
     payload_type_name = payload_type.name if payload_type else "Unknown"
+    transport_codes = packet_info.transport_codes if packet_info else None
+
+    packet_id, is_new_packet = await RawPacketRepository.create(
+        raw_bytes, ts, transport_codes=transport_codes
+    )
+    raw_hex = raw_bytes.hex()
 
     if packet_info is None and len(raw_bytes) > 2:
         logger.warning(
@@ -318,6 +321,7 @@ async def process_raw_packet(
         "payload_type": payload_type_name,
         "snr": snr,
         "rssi": rssi,
+        "transport_codes": transport_codes.hex() if transport_codes else None,
         "decrypted": False,
         "message_id": None,
         "channel_name": None,
@@ -361,6 +365,7 @@ async def process_raw_packet(
         payload_type=payload_type_name,
         snr=snr,
         rssi=rssi,
+        transport_codes=transport_codes.hex() if transport_codes else None,
         decrypted=result["decrypted"],
         decrypted_info=RawPacketDecryptedInfo(
             channel_name=result["channel_name"],

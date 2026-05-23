@@ -508,6 +508,20 @@ class StatisticsRepository:
         return bucket_path_hash_widths(rows)
 
     @staticmethod
+    async def _primary_regions_24h() -> dict[str, int | list]:
+        """Count primary transport regions from the last 24h of raw packets."""
+        from app.path_utils import bucket_primary_regions
+
+        now = int(time.time())
+        async with db.readonly() as conn:
+            async with conn.execute(
+                "SELECT transport_codes FROM raw_packets WHERE timestamp >= ? AND transport_codes IS NOT NULL",
+                (now - SECONDS_24H,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return bucket_primary_regions(rows)
+
+    @staticmethod
     async def get_all() -> dict:
         """Aggregate all statistics from existing tables.
 
@@ -584,6 +598,7 @@ class StatisticsRepository:
         repeaters_heard = await StatisticsRepository._activity_counts(contact_type=2)
         known_channels_active = await StatisticsRepository._known_channels_active()
         path_hash_width_24h = await StatisticsRepository._path_hash_width_24h()
+        primary_regions_24h = await StatisticsRepository._primary_regions_24h()
         packets_per_hour_72h = await StatisticsRepository._packets_per_hour_72h()
 
         return {
@@ -598,6 +613,7 @@ class StatisticsRepository:
             "total_channel_messages": message_totals["total_channel_messages"],
             "total_outgoing": message_totals["total_outgoing"],
             "contacts_heard": contacts_heard,
+            "primary_regions_24h": primary_regions_24h,
             "repeaters_heard": repeaters_heard,
             "known_channels_active": known_channels_active,
             "path_hash_width_24h": path_hash_width_24h,

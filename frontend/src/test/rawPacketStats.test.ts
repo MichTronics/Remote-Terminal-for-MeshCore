@@ -88,6 +88,7 @@ describe('buildRawPacketStatsSnapshot', () => {
       payload_type: 'TextMessage',
       snr: 4,
       rssi: -72,
+      transport_codes: null,
       decrypted: true,
       decrypted_info: {
         channel_name: null,
@@ -114,6 +115,7 @@ describe('buildRawPacketStatsSnapshot', () => {
       payload_type: 'TextMessage',
       snr: 4,
       rssi: -72,
+      transport_codes: null,
       decrypted: false,
       decrypted_info: null,
     };

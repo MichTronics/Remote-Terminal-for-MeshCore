@@ -404,6 +404,60 @@ export function SettingsStatisticsSection({ className }: { className?: string })
             )}
           </div>
 
+          {/* Primary Regions */}
+          <Separator />
+          <div>
+            <h3 className="text-base font-semibold tracking-tight mb-2">
+              Primary Regions (24h)
+            </h3>
+            <div className="mb-2 text-xs text-muted-foreground">
+              Transport-enabled packets from the last 24 hours:{' '}
+              {stats.primary_regions_24h.total_packets}
+            </div>
+            {stats.primary_regions_24h.total_packets > 0 ? (
+              <ResponsiveContainer width="100%" height={Math.max(120, stats.primary_regions_24h.regions.length * 30)}>
+                <BarChart
+                  data={stats.primary_regions_24h.regions}
+                  margin={{ top: 4, right: 4, bottom: 0, left: -16 }}
+                  layout="vertical"
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="hsl(var(--border))"
+                    horizontal={false}
+                  />
+                  <XAxis
+                    type="number"
+                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="region"
+                    tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={60}
+                  />
+                  <RechartsTooltip
+                    {...TOOLTIP_STYLE}
+                    cursor={{ fill: 'hsl(var(--muted))', opacity: 0.5 }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    formatter={(value: any) => [`${Number(value).toLocaleString()} packets`, 'Count']}
+                    labelFormatter={(label: any) => `Region: ${label}`}
+                  />
+                  <Bar dataKey="count" fill="hsl(var(--chart-2))" radius={[0, 4, 4, 0]} maxBarSize={30} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No transport-enabled packets received in the last 24 hours.
+              </p>
+            )}
+          </div>
+
           {/* Busiest Channels */}
           {stats.busiest_channels_24h.length > 0 && (
             <>

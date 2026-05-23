@@ -132,6 +132,21 @@ function formatTimestamp(timestamp: number): string {
   });
 }
 
+function formatTransportCodesForDetail(transportCodes: string): string {
+  // Transport codes are 4 bytes: primary (0-1) and secondary (2-3)
+  const upper = transportCodes.toUpperCase();
+  if (upper.length !== 8) return upper; // Malformed, show as-is
+  
+  const primary = upper.slice(0, 4);
+  const secondary = upper.slice(4, 8);
+  
+  // Only show secondary if not 0000
+  if (secondary === '0000') {
+    return primary;
+  }
+  return `${primary} ${secondary}`;
+}
+
 function formatSignal(
   packet: RawPacket,
   signalOverride?: SignalOverride
@@ -141,6 +156,7 @@ function formatSignal(
   const lines: string[] = [];
   if (rssi !== null) lines.push(`${rssi} dBm RSSI`);
   if (snr !== null) lines.push(`${snr.toFixed(1)} dB SNR`);
+  if (packet.transport_codes) lines.push(`Region: ${formatTransportCodesForDetail(packet.transport_codes)}`);
   const isOverride =
     signalOverride != null && (signalOverride.rssi != null || signalOverride.snr != null);
   return {
@@ -435,6 +451,7 @@ function buildPastedRawPacket(packetHex: string): RawPacket {
     payload_type: 'Unknown',
     snr: null,
     rssi: null,
+    transport_codes: null,
     decrypted: false,
     decrypted_info: null,
   };

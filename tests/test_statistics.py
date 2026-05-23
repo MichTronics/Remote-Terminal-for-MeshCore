@@ -43,6 +43,10 @@ class TestStatisticsEmpty:
             "double_byte_pct": 0.0,
             "triple_byte_pct": 0.0,
         }
+        assert result["primary_regions_24h"] == {
+            "total_packets": 0,
+            "regions": [],
+        }
         assert result["packets_per_hour_72h"] == []
 
 
@@ -435,6 +439,99 @@ class TestPacketsPerHour:
 
         result = await StatisticsRepository.get_all()
         assert result["packets_per_hour_72h"] == []
+
+
+class TestPrimaryRegionsBucketing:
+    @pytest.mark.asyncio
+    async def test_bucket_primary_regions(self, test_db):
+        """Primary regions are counted and sorted by usage."""
+        from app.path_utils import bucket_primary_regions
+
+        now = int(time.time())
+        conn = test_db.conn
+
+        # Insert packets with transport codes
+        # Region 308F appears 3 times
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp, transport_codes) VALUES (?, ?, ?)",
+            (b"\\x00\\x00\\x00\\x00", now, bytes.fromhex("308F0000")),
+        )
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp, transport_codes) VALUES (?, ?, ?)",
+            (b"\\x00\\x00\\x00\\x00", now, bytes.fromhex("308FAAAA")),
+        )
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp, transport_codes) VALUES (?, ?, ?)",
+            (b"\\x00\\x00\\x00\\x00", now, bytes.fromhex("308F1234")),
+        )
+
+        # Region FFFF appears 2 times
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp, transport_codes) VALUES (?, ?, ?)",
+            (b"\\x00\\x00\\x00\\x00", now, bytes.fromhex("FFFF0000")),
+        )
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp, transport_codes) VALUES (?, ?, ?)",
+            (b"\\x00\\x00\\x00\\x00", now, bytes.fromhex("FFFF9999")),
+        )
+
+        # Region 0000 should be skipped
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp, transport_codes) VALUES (?, ?, ?)",
+            (b"\\x00\\x00\\x00\\x00", now, bytes.fromhex("00000000")),
+        )
+
+        # Packets with NULL transport_codes should be skipped
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp) VALUES (?, ?)",
+            (b"\\x00\\x00\\x00\\x00", now),
+        )
+
+        await conn.commit()
+
+        async with conn.execute("SELECT transport_codes FROM raw_packets") as cursor:
+            rows = await cursor.fetchall()
+
+        result = bucket_primary_regions(rows)
+
+        # Should have 2 regions (308F and FFFF), excluding 0000 and NULL
+        assert result["total_packets"] == 5
+        assert len(result["regions"]) == 2
+
+        # Regions should be sorted by count descending
+        assert result["regions"][0]["region"] == "308F"
+        assert result["regions"][0]["count"] == 3
+        assert result["regions"][1]["region"] == "FFFF"
+        assert result["regions"][1]["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_primary_regions_24h(self, test_db):
+        """Repository method correctly filters by 24h window."""
+        now = int(time.time())
+        old_time = now - (25 * 3600)  # 25 hours ago
+        conn = test_db.conn
+
+        # Recent packet
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp, transport_codes) VALUES (?, ?, ?)",
+            (b"\\x00\\x00\\x00\\x00", now, bytes.fromhex("ABCD0000")),
+        )
+
+        # Old packet (should be excluded)
+        await conn.execute(
+            "INSERT INTO raw_packets (data, timestamp, transport_codes) VALUES (?, ?, ?)",
+            (b"\\x00\\x00\\x00\\x00", old_time, bytes.fromhex("FFFF0000")),
+        )
+
+        await conn.commit()
+
+        result = await StatisticsRepository._primary_regions_24h()
+
+        # Should only include the recent packet
+        assert result["total_packets"] == 1
+        assert len(result["regions"]) == 1
+        assert result["regions"][0]["region"] == "ABCD"
+        assert result["regions"][0]["count"] == 1
 
 
 class TestStatisticsEndpoint:

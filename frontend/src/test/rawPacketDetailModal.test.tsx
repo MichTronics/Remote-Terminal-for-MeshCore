@@ -36,6 +36,7 @@ const BOT_PACKET: RawPacket = {
   payload_type: 'GroupText',
   rssi: -72,
   snr: 5.5,
+  transport_codes: null,
   decrypted_info: null,
 };
 
@@ -49,6 +50,7 @@ const SCOPED_PACKET: RawPacket = {
   payload_type: 'Ack',
   rssi: -80,
   snr: 3.0,
+  transport_codes: null,
   decrypted_info: null,
 };
 

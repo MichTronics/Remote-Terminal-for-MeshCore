@@ -15,6 +15,21 @@ function formatTime(timestamp: number): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function formatTransportCodes(transportCodes: string): string {
+  // Transport codes are 4 bytes: primary (0-1) and secondary (2-3)
+  const upper = transportCodes.toUpperCase();
+  if (upper.length !== 8) return upper; // Malformed, show as-is
+  
+  const primary = upper.slice(0, 4);
+  const secondary = upper.slice(4, 8);
+  
+  // Only show secondary if not 0000
+  if (secondary === '0000') {
+    return primary;
+  }
+  return `${primary} ${secondary}`;
+}
+
 function formatSignalInfo(packet: RawPacket): string {
   const parts: string[] = [];
   if (packet.snr !== null && packet.snr !== undefined) {
@@ -22,6 +37,9 @@ function formatSignalInfo(packet: RawPacket): string {
   }
   if (packet.rssi !== null && packet.rssi !== undefined) {
     parts.push(`RSSI: ${packet.rssi} dBm`);
+  }
+  if (packet.transport_codes) {
+    parts.push(`Region: ${formatTransportCodes(packet.transport_codes)}`);
   }
   return parts.join(' | ');
 }
@@ -132,7 +150,7 @@ export function RawPacketList({ packets, channels, onPacketClick }: RawPacketLis
             </div>
 
             {/* Signal info */}
-            {(packet.snr !== null || packet.rssi !== null) && (
+            {(packet.snr !== null || packet.rssi !== null || packet.transport_codes) && (
               <div className="text-[0.6875rem] text-muted-foreground mt-0.5 tabular-nums">
                 {formatSignalInfo(packet)}
               </div>

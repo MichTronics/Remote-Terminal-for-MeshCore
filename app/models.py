@@ -384,6 +384,20 @@ class PathHashWidthStats(BaseModel):
     triple_byte_pct: float = 0.0
 
 
+class RegionUsageItem(BaseModel):
+    """A single region usage count."""
+
+    region: str  # Primary region hex (2 bytes, e.g., "FFFF")
+    count: int
+
+
+class RegionUsageStats(BaseModel):
+    """Primary region usage distribution for raw packets with transport codes."""
+
+    total_packets: int = 0
+    regions: list[RegionUsageItem] = []
+
+
 class ChannelDetail(BaseModel):
     """Comprehensive channel profile data."""
 
@@ -472,6 +486,9 @@ class RawPacketBroadcast(BaseModel):
     payload_type: str = Field(description="Packet type name (e.g., GROUP_TEXT, ADVERT)")
     snr: float | None = Field(default=None, description="Signal-to-noise ratio in dB")
     rssi: int | None = Field(default=None, description="Received signal strength in dBm")
+    transport_codes: str | None = Field(
+        default=None, description="Hex-encoded 4-byte transport/region codes for TRANSPORT routes"
+    )
     decrypted: bool = False
     decrypted_info: RawPacketDecryptedInfo | None = None
 
@@ -486,6 +503,9 @@ class RawPacketDetail(BaseModel):
     snr: float | None = Field(default=None, description="Signal-to-noise ratio in dB if available")
     rssi: int | None = Field(
         default=None, description="Received signal strength in dBm if available"
+    )
+    transport_codes: str | None = Field(
+        default=None, description="Hex-encoded 4-byte transport/region codes for TRANSPORT routes"
     )
     decrypted: bool = False
     decrypted_info: RawPacketDecryptedInfo | None = None
@@ -938,6 +958,7 @@ class StatisticsResponse(BaseModel):
     repeaters_heard: ContactActivityCounts
     known_channels_active: ContactActivityCounts
     path_hash_width_24h: PathHashWidthStats
+    primary_regions_24h: RegionUsageStats
     packets_per_hour_72h: list[PacketsPerHourBucket]
     noise_floor_24h: NoiseFloorHistoryStats
 

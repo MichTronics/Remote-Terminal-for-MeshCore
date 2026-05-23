@@ -267,6 +267,16 @@ export interface PathHashWidthStats {
   triple_byte_pct: number;
 }
 
+export interface RegionUsageItem {
+  region: string; // Primary region hex (2 bytes, e.g., "FFFF")
+  count: number;
+}
+
+export interface RegionUsageStats {
+  total_packets: number;
+  regions: RegionUsageItem[];
+}
+
 export interface ChannelDetail {
   channel: Channel;
   message_counts: ChannelMessageCounts;
@@ -343,6 +353,7 @@ export interface RawPacket {
   payload_type: string;
   snr: number | null; // Signal-to-noise ratio in dB
   rssi: number | null; // Received signal strength in dBm
+  transport_codes: string | null; // Hex-encoded 4-byte transport/region codes for TRANSPORT routes
   decrypted: boolean;
   decrypted_info: {
     channel_name: string | null;
@@ -647,6 +658,7 @@ export interface StatisticsResponse {
     double_byte_pct: number;
     triple_byte_pct: number;
   };
+  primary_regions_24h: RegionUsageStats;
   packets_per_hour_72h: PacketsPerHourBucket[];
   noise_floor_24h: NoiseFloorHistoryStats;
 }

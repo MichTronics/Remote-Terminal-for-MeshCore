@@ -23,6 +23,7 @@ class ParsedPacketEnvelope:
     route_type: int
     payload_type: int
     payload_version: int
+    transport_codes: bytes | None
     path_byte: int
     hop_count: int
     hash_size: int
@@ -90,9 +91,11 @@ def parse_packet_envelope(raw_packet: bytes) -> ParsedPacketEnvelope | None:
         payload_version = (header >> 6) & 0x03
 
         offset = 1
-        if route_type in (0x00, 0x03):
+        transport_codes = None
+        if route_type in (0x00, 0x03):  # TRANSPORT_FLOOD or TRANSPORT_DIRECT
             if len(raw_packet) < offset + 4:
                 return None
+            transport_codes = raw_packet[offset : offset + 4]
             offset += 4
 
         if len(raw_packet) < offset + 1:
@@ -115,6 +118,7 @@ def parse_packet_envelope(raw_packet: bytes) -> ParsedPacketEnvelope | None:
             route_type=route_type,
             payload_type=payload_type,
             payload_version=payload_version,
+            transport_codes=transport_codes,
             path_byte=path_byte,
             hop_count=hop_count,
             hash_size=hash_size,
@@ -288,4 +292,46 @@ def bucket_path_hash_widths(rows: Iterable) -> dict[str, int | float]:
         "single_byte_pct": (single_byte / total) * 100,
         "double_byte_pct": (double_byte / total) * 100,
         "triple_byte_pct": (triple_byte / total) * 100,
+    }
+
+
+def bucket_primary_regions(rows: Iterable) -> dict[str, int | list]:
+    """Bucket raw packet rows by primary transport region (bytes 0-1) and return top regions with counts.
+
+    *rows* must be an already-fetched list whose elements have a ``transport_codes``
+    column containing 4-byte transport codes (or None).
+
+    Returns dict with:
+    - total_packets: total packets with transport codes (excludes None and 0000)
+    - regions: list of {"region": "FFFF", "count": 123} sorted by count descending
+    """
+    from collections import Counter
+
+    region_counts: Counter[str] = Counter()
+    
+    for row in rows:
+        transport_codes = row["transport_codes"]
+        if transport_codes is None or len(transport_codes) < 2:
+            continue
+        
+        # Extract primary region (first 2 bytes)
+        primary = transport_codes[:2].hex().upper()
+        
+        # Skip if all zeros
+        if primary == "0000":
+            continue
+            
+        region_counts[primary] += 1
+    
+    # Convert to sorted list (most common first)
+    regions = [
+        {"region": region, "count": count}
+        for region, count in region_counts.most_common()
+    ]
+    
+    total = sum(r["count"] for r in regions)
+    
+    return {
+        "total_packets": total,
+        "regions": regions,
     }

@@ -13,7 +13,9 @@ UNDECRYPTED_PACKET_BATCH_SIZE = 500
 
 class RawPacketRepository:
     @staticmethod
-    async def create(data: bytes, timestamp: int | None = None) -> tuple[int, bool]:
+    async def create(
+        data: bytes, timestamp: int | None = None, transport_codes: bytes | None = None
+    ) -> tuple[int, bool]:
         """
         Create a raw packet with payload-based deduplication.
 
@@ -36,8 +38,9 @@ class RawPacketRepository:
 
         async with db.tx() as conn:
             async with conn.execute(
-                "INSERT OR IGNORE INTO raw_packets (timestamp, data, payload_hash) VALUES (?, ?, ?)",
-                (ts, data, payload_hash),
+                "INSERT OR IGNORE INTO raw_packets (timestamp, data, payload_hash, transport_codes) "
+                "VALUES (?, ?, ?, ?)",
+                (ts, data, payload_hash, transport_codes),
             ) as cursor:
                 rowcount = cursor.rowcount
                 lastrowid = cursor.lastrowid
@@ -166,17 +169,24 @@ class RawPacketRepository:
         return row["message_id"]
 
     @staticmethod
-    async def get_by_id(packet_id: int) -> tuple[int, bytes, int, int | None] | None:
-        """Return a raw packet row as (id, data, timestamp, message_id)."""
+    async def get_by_id(packet_id: int) -> tuple[int, bytes, int, int | None, bytes | None] | None:
+        """Return a raw packet row as (id, data, timestamp, message_id, transport_codes)."""
         async with db.readonly() as conn:
             async with conn.execute(
-                "SELECT id, data, timestamp, message_id FROM raw_packets WHERE id = ?",
+                "SELECT id, data, timestamp, message_id, transport_codes FROM raw_packets WHERE id = ?",
                 (packet_id,),
             ) as cursor:
                 row = await cursor.fetchone()
         if not row:
             return None
-        return (row["id"], bytes(row["data"]), row["timestamp"], row["message_id"])
+        transport_codes_bytes = bytes(row["transport_codes"]) if row["transport_codes"] else None
+        return (
+            row["id"],
+            bytes(row["data"]),
+            row["timestamp"],
+            row["message_id"],
+            transport_codes_bytes,
+        )
 
     @staticmethod
     async def prune_old_undecrypted(max_age_days: int) -> int:

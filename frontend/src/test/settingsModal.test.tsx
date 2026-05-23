@@ -694,6 +694,10 @@ describe('SettingsModal', () => {
         double_byte_pct: 30,
         triple_byte_pct: 20,
       },
+      primary_regions_24h: {
+        total_packets: 0,
+        regions: [],
+      },
       packets_per_hour_72h: [
         { timestamp: 1711792800, count: 12 },
         { timestamp: 1711796400, count: 8 },
@@ -766,6 +770,10 @@ describe('SettingsModal', () => {
         single_byte_pct: 50,
         double_byte_pct: 30,
         triple_byte_pct: 20,
+      },
+      primary_regions_24h: {
+        total_packets: 0,
+        regions: [],
       },
       packets_per_hour_72h: [],
       noise_floor_24h: {

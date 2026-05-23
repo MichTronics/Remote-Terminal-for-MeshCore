@@ -78,6 +78,7 @@ function createPacket(data: string): RawPacket {
     payload_type: 'TEXT',
     snr: null,
     rssi: null,
+    transport_codes: null,
     decrypted: false,
     decrypted_info: null,
   };

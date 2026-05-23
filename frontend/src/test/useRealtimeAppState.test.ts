@@ -294,6 +294,7 @@ describe('useRealtimeAppState', () => {
       payload_type: 'GROUP_TEXT',
       snr: 7.5,
       rssi: -80,
+      transport_codes: null,
       decrypted: false,
       decrypted_info: null,
     };

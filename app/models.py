@@ -524,6 +524,9 @@ class RawPacketBroadcast(BaseModel):
     transport_codes: str | None = Field(
         default=None, description="Hex-encoded 4-byte transport/region codes for TRANSPORT routes"
     )
+    region_name: str | None = Field(
+        default=None, description="Identified region name from transport code matching"
+    )
     decrypted: bool = False
     decrypted_info: RawPacketDecryptedInfo | None = None
 
@@ -541,9 +544,6 @@ class RawPacketDetail(BaseModel):
     )
     transport_codes: str | None = Field(
         default=None, description="Hex-encoded 4-byte transport/region codes for TRANSPORT routes"
-    )
-    region_name: str | None = Field(
-        default=None, description="Identified region name (e.g., 'us', 'nl') if matched against known regions"
     )
     region_name: str | None = Field(
         default=None, description="Identified region name (e.g., 'us', 'nl') if matched against known regions"

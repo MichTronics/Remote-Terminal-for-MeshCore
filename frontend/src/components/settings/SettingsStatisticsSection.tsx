@@ -448,7 +448,11 @@ export function SettingsStatisticsSection({ className }: { className?: string })
                     formatter={(value: any) => [`${Number(value).toLocaleString()} packets`, 'Count']}
                     labelFormatter={(label: any) => `Region: ${label}`}
                   />
-                  <Bar dataKey="count" fill="hsl(var(--chart-2))" radius={[0, 4, 4, 0]} maxBarSize={30} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={30}>
+                    {stats.primary_regions_24h.regions.map((_, i) => (
+                      <Cell key={i} fill={CHANNEL_BAR_COLORS[i % CHANNEL_BAR_COLORS.length]} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : (

@@ -137,6 +137,8 @@ function formatTimestamp(timestamp: number): string {
 
 function formatTransportCodesForDetail(transportCodes: string): string {
   // Transport codes are 4 bytes: primary (0-1) and secondary (2-3)
+  // transport_code_1 - 2 bytes - uint16_t - calculated from region scope
+  // transport_code_2 - 2 bytes - uint16_t - reserved for future use, currently set to 0 might be come sub-regional scope in the future
   const upper = transportCodes.toUpperCase();
   if (upper.length !== 8) return upper; // Malformed, show as-is
   
@@ -471,11 +473,13 @@ function FieldBox({
   palette,
   active,
   onHoverField,
+  regionName,
 }: {
   field: PacketByteField;
   palette: FieldPaletteEntry;
   active: boolean;
   onHoverField: (fieldId: string | null) => void;
+  regionName?: string | null;
 }) {
   return (
     <div
@@ -506,6 +510,17 @@ function FieldBox({
       <div className="mt-2 whitespace-pre-wrap text-sm leading-5 text-foreground">
         {field.description}
       </div>
+
+      {field.name === 'Transport Code' && regionName ? (
+        <div className="mt-2 rounded border border-border/50 bg-background/40 p-2">
+          <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">
+            Identified Region
+          </div>
+          <div className="mt-1 font-mono text-sm leading-5 text-foreground">
+            {regionName}
+          </div>
+        </div>
+      ) : null}
 
       {field.decryptedMessage ? (
         <div className="mt-2 rounded border border-border/50 bg-background/40 p-2">
@@ -583,12 +598,14 @@ function FieldSection({
   colorMap,
   hoveredFieldId,
   onHoverField,
+  regionName,
 }: {
   title: string;
   fields: PacketByteField[];
   colorMap: Map<string, FieldPaletteEntry>;
   hoveredFieldId: string | null;
   onHoverField: (fieldId: string | null) => void;
+  regionName?: string | null;
 }) {
   return (
     <section className="rounded-lg border border-border/70 bg-card/70 p-3">
@@ -604,6 +621,7 @@ function FieldSection({
               palette={colorMap.get(field.id) ?? FIELD_PALETTE[0]}
               active={hoveredFieldId === field.id}
               onHoverField={onHoverField}
+              regionName={regionName}
             />
           ))}
         </div>
@@ -767,6 +785,7 @@ export function RawPacketInspectionPanel({
           colorMap={colorMap}
           hoveredFieldId={hoveredFieldId}
           onHoverField={setHoveredFieldId}
+          regionName={packet.region_name}
         />
 
         <FieldSection

@@ -1,8 +1,7 @@
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import type { Channel, RawPacket, Region } from '../types';
 import { getRawPacketObservationKey } from '../utils/rawPacketIdentity';
 import { createDecoderOptions, decodePacketSummary } from '../utils/rawPacketInspector';
-import { identifyPacketRegion } from '../utils/regionIdentifier';
 import { cn } from '@/lib/utils';
 
 interface RawPacketListProps {
@@ -32,7 +31,7 @@ function formatTransportCodes(transportCodes: string): string {
   return `${primary} ${secondary}`;
 }
 
-function formatSignalInfo(packet: RawPacket, identifiedRegion?: string | null): string {
+function formatSignalInfo(packet: RawPacket): string {
   const parts: string[] = [];
   if (packet.snr !== null && packet.snr !== undefined) {
     parts.push(`SNR: ${packet.snr.toFixed(1)} dB`);
@@ -40,10 +39,8 @@ function formatSignalInfo(packet: RawPacket, identifiedRegion?: string | null): 
   if (packet.rssi !== null && packet.rssi !== undefined) {
     parts.push(`RSSI: ${packet.rssi} dBm`);
   }
-  // Prefer client-side identified region, then stored region_name, then hex codes
-  if (identifiedRegion) {
-    parts.push(`Region: ${identifiedRegion}`);
-  } else if (packet.region_name) {
+  // Display backend-identified region or hex codes as fallback
+  if (packet.region_name) {
     parts.push(`Region: ${packet.region_name}`);
   } else if (packet.transport_codes) {
     parts.push(`Region: ${formatTransportCodes(packet.transport_codes)}`);
@@ -83,46 +80,9 @@ function getRouteTypeLabel(routeType: string): string {
   }
 }
 
-export function RawPacketList({ packets, channels, regions, onPacketClick }: RawPacketListProps) {
+export function RawPacketList({ packets, channels, onPacketClick }: RawPacketListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const decoderOptions = useMemo(() => createDecoderOptions(channels), [channels]);
-
-  // Track client-side identified region names per packet observation_id
-  const [identifiedRegions, setIdentifiedRegions] = useState<Map<number, string | null>>(new Map());
-  const attemptedIdentificationRef = useRef<Set<number>>(new Set());
-
-  // Identify regions for packets with transport codes
-  useEffect(() => {
-    if (!regions || regions.length === 0) return;
-
-    const identifyRegions = async () => {
-      const newIdentifications = new Map<number, string | null>();
-
-      for (const packet of packets) {
-        const packetKey = packet.observation_id ?? packet.id;
-        
-        // Skip if no transport codes
-        if (!packet.transport_codes) {
-          continue;
-        }
-
-        // Skip if already attempted
-        if (attemptedIdentificationRef.current.has(packetKey)) {
-          continue;
-        }
-
-        attemptedIdentificationRef.current.add(packetKey);
-        const regionName = await identifyPacketRegion(packet.data, regions);
-        newIdentifications.set(packetKey, regionName);
-      }
-
-      if (newIdentifications.size > 0) {
-        setIdentifiedRegions((prev) => new Map([...prev, ...newIdentifications]));
-      }
-    };
-
-    identifyRegions();
-  }, [packets, regions]);
 
   // Decode all packets (memoized to avoid re-decoding on every render)
   const decodedPackets = useMemo(() => {
@@ -158,7 +118,6 @@ export function RawPacketList({ packets, channels, regions, onPacketClick }: Raw
       ref={listRef}
     >
       {sortedPackets.map(({ packet, decoded }) => {
-        const identifiedRegion = identifiedRegions.get(packet.observation_id ?? packet.id);
         const cardContent = (
           <>
             <div className="flex items-center gap-2">
@@ -197,7 +156,7 @@ export function RawPacketList({ packets, channels, regions, onPacketClick }: Raw
             {/* Signal info */}
             {(packet.snr !== null || packet.rssi !== null || packet.transport_codes) && (
               <div className="text-[0.6875rem] text-muted-foreground mt-0.5 tabular-nums">
-                {formatSignalInfo(packet, identifiedRegion)}
+                {formatSignalInfo(packet)}
               </div>
             )}
 

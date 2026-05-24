@@ -149,6 +149,7 @@ def packet_matches_meshcore_region(
         region_key=region_key,
     )
     observed = int.from_bytes(packet_info.transport_codes[:2], "little")
+    
     return expected == observed
 
 

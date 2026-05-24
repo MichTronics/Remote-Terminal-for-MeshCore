@@ -8,7 +8,6 @@ import {
   inspectRawPacketWithOptions,
   type PacketByteField,
 } from '../utils/rawPacketInspector';
-import { identifyPacketRegion } from '../utils/regionIdentifier';
 import { toast } from './ui/sonner';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
@@ -153,18 +152,15 @@ function formatTransportCodesForDetail(transportCodes: string): string {
 
 function formatSignal(
   packet: RawPacket,
-  signalOverride?: SignalOverride,
-  identifiedRegion?: string | null
+  signalOverride?: SignalOverride
 ): { lines: string[]; label: string } {
   const rssi = signalOverride?.rssi ?? packet.rssi;
   const snr = signalOverride?.snr ?? packet.snr;
   const lines: string[] = [];
   if (rssi !== null) lines.push(`${rssi} dBm RSSI`);
   if (snr !== null) lines.push(`${snr.toFixed(1)} dB SNR`);
-  // Prefer client-side identified region, then stored region_name, then hex codes
-  if (identifiedRegion) {
-    lines.push(`Region: ${identifiedRegion}`);
-  } else if (packet.region_name) {
+  // Display backend-identified region or hex codes as fallback
+  if (packet.region_name) {
     lines.push(`Region: ${packet.region_name}`);
   } else if (packet.transport_codes) {
     lines.push(`Region: ${formatTransportCodesForDetail(packet.transport_codes)}`);
@@ -619,7 +615,6 @@ function FieldSection({
 export function RawPacketInspectionPanel({
   packet,
   channels,
-  regions,
   signalOverride,
 }: RawPacketInspectionPanelProps) {
   const decoderOptions = useMemo(() => createDecoderOptions(channels), [channels]);
@@ -632,17 +627,6 @@ export function RawPacketInspectionPanel({
     [decoderOptions, packet]
   );
   const [hoveredFieldId, setHoveredFieldId] = useState<string | null>(null);
-  const [identifiedRegion, setIdentifiedRegion] = useState<string | null>(null);
-
-  // Identify region for this packet
-  useEffect(() => {
-    if (!regions || !packet.transport_codes) {
-      setIdentifiedRegion(null);
-      return;
-    }
-
-    identifyPacketRegion(packet.data, regions).then(setIdentifiedRegion);
-  }, [packet, regions]);
 
   const packetDisplayFields = useMemo(
     () => inspection.packetFields.filter((field) => field.name !== 'Payload'),
@@ -719,7 +703,7 @@ export function RawPacketInspectionPanel({
             />
           ) : null}
           {(() => {
-            const sig = formatSignal(packet, signalOverride, identifiedRegion);
+            const sig = formatSignal(packet, signalOverride);
             return (
               <div className="rounded-lg border border-border/70 bg-card/70 p-2.5">
                 <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">

@@ -690,6 +690,8 @@ export function App() {
     onToggleTrackedTelemetry: handleToggleTrackedTelemetry,
     repeaterAutoLoginKey,
     onClearRepeaterAutoLogin: () => setRepeaterAutoLoginKey(null),
+    blockedKeys: appSettings?.blocked_keys,
+    blockedNames: appSettings?.blocked_names,
   };
   const searchProps = {
     contacts,

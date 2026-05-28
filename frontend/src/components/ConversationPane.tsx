@@ -94,6 +94,8 @@ interface ConversationPaneProps {
   onToggleTrackedTelemetry: (publicKey: string) => Promise<void>;
   repeaterAutoLoginKey: string | null;
   onClearRepeaterAutoLogin: () => void;
+  blockedKeys?: string[];
+  blockedNames?: string[];
 }
 
 function LoadingPane({ label }: { label: string }) {
@@ -174,6 +176,8 @@ export function ConversationPane({
   onToggleTrackedTelemetry,
   repeaterAutoLoginKey,
   onClearRepeaterAutoLogin,
+  blockedKeys,
+  blockedNames,
 }: ConversationPaneProps) {
   const [roomAuthenticated, setRoomAuthenticated] = useState(false);
   const activeContactIsRepeater = useMemo(() => {
@@ -218,6 +222,8 @@ export function ConversationPane({
               focusedKey={activeConversation.mapFocusKey}
               rawPackets={rawPackets}
               config={config}
+              blockedKeys={blockedKeys}
+              blockedNames={blockedNames}
               onSelectContact={(contact) =>
                 onSelectConversation({
                   type: 'contact',

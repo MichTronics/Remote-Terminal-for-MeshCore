@@ -6,6 +6,8 @@ import logging
 import ssl
 from typing import Any, Protocol
 
+import paho.mqtt.client as mqtt
+
 from app.fanout.mqtt_base import BaseMqttPublisher
 
 logger = logging.getLogger(__name__)
@@ -40,14 +42,18 @@ class MqttPublisher(BaseMqttPublisher):
     def _build_client_kwargs(self, settings: object) -> dict[str, Any]:
         s: PrivateMqttSettings = settings  # type: ignore[assignment]
         # Use 60s keepalive for MQTT ping/pong to detect stale connections
-        return {
+        kwargs = {
             "hostname": s.mqtt_broker_host,
             "port": s.mqtt_broker_port,
             "username": s.mqtt_username or None,
             "password": s.mqtt_password or None,
             "tls_context": self._build_tls_context(s),
             "keepalive": 60,
+            "protocol": mqtt.MQTTv311,  # Explicit protocol version for compatibility
+            "timeout": 60.0,  # Connection timeout
+            "clean_session": True,  # Don't persist session state
         }
+        return kwargs
 
     def _on_connected(self, settings: object) -> tuple[str, str]:
         s: PrivateMqttSettings = settings  # type: ignore[assignment]

@@ -170,6 +170,12 @@ def _validate_mqtt_community_config(config: dict) -> None:
         )
     config["iata"] = iata
 
+    # WebSocket path configuration (defaults to "/" but some brokers use "/mqtt")
+    websocket_path = str(config.get("websocket_path", "/")).strip()
+    if not websocket_path or websocket_path[0] != "/":
+        websocket_path = "/"
+    config["websocket_path"] = websocket_path
+
     topic_template = str(
         config.get("topic_template", _DEFAULT_COMMUNITY_MQTT_TOPIC_TEMPLATE)
     ).strip()

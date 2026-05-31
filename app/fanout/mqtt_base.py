@@ -250,11 +250,15 @@ class BaseMqttPublisher(ABC):
 
                 # Log connection attempt with broker details for debugging
                 broker_info = f"{client_kwargs.get('hostname', 'unknown')}:{client_kwargs.get('port', 'unknown')}"
+                transport_info = client_kwargs.get("transport", "tcp")
                 logger.info(
-                    "%s attempting connection to %s via %s",
+                    "%s attempting connection to %s via %s (keepalive=%ds, protocol=%s, timeout=%ss)",
                     self._integration_label(),
                     broker_info,
-                    client_kwargs.get("transport", "tcp"),
+                    transport_info,
+                    client_kwargs.get("keepalive", 60),
+                    client_kwargs.get("protocol", "unknown"),
+                    client_kwargs.get("timeout", "unknown"),
                 )
 
                 async with aiomqtt.Client(**client_kwargs) as client:

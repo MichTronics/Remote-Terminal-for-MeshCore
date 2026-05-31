@@ -60,6 +60,7 @@ class CommunityMqttSettings(Protocol):
     community_mqtt_iata: str
     community_mqtt_email: str
     community_mqtt_token_audience: str
+    community_mqtt_websocket_path: str
 
 
 def _base64url_encode(data: bytes) -> str:
@@ -329,9 +330,11 @@ class CommunityMqttPublisher(BaseMqttPublisher):
         tls_context: ssl.SSLContext | None = None
         if use_tls:
             tls_context = ssl.create_default_context()
-            if not tls_verify:
-                tls_context.check_hostname = False
-                tls_context.verify_mode = ssl.CERT_NONE
+            # Explicitly set server_hostname for SNI - critical for WebSocket over TLS
+            tls_context.check_hostname = True if tls_verify else False
+            tls_context.verify_mode = ssl.CERT_REQUIRED if tls_verify else ssl.CERT_NONE
+            # Enable TLS 1.2 and 1.3 explicitly for better compatibility
+            tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
 
         device_name = ""
         if radio_manager.meshcore and radio_manager.meshcore.self_info:
@@ -382,8 +385,19 @@ class CommunityMqttPublisher(BaseMqttPublisher):
             kwargs["username"] = s.community_mqtt_username or None
             kwargs["password"] = s.community_mqtt_password or None
         if transport == "websockets":
-            kwargs["websocket_path"] = "/"
-            kwargs["websocket_headers"] = None
+            ws_path = getattr(s, "community_mqtt_websocket_path", "/") or "/"
+            kwargs["websocket_path"] = ws_path
+            # Don't set websocket_headers - let paho-mqtt handle Sec-WebSocket-Protocol automatically
+            # Log WebSocket connection details for debugging
+            logger.info(
+                "%s configuring WebSocket: host=%s port=%d path=%s TLS=%s verify=%s",
+                self._log_prefix,
+                broker_host,
+                broker_port,
+                ws_path,
+                use_tls,
+                tls_verify,
+            )
         return kwargs
 
     def _on_connected(self, settings: object) -> tuple[str, str]:

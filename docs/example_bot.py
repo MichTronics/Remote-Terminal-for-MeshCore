@@ -29,16 +29,16 @@ def bot(sender_name, sender_key, message_text, is_dm, channel_key, channel_name,
         **kwargs: Forward compatibility for future parameters
     """
     
-    # Only respond to messages in #noordtest channel
-    if is_dm or channel_name != "#noordtest":
+    # Only respond to messages in #testnoord channel
+    if is_dm or channel_name != "#testnoord":
         return None
     
     # Ignore our own outgoing messages to prevent loops
     if is_outgoing:
         return None
     
-    # Only respond to !test command (exact match, case-sensitive)
-    if message_text.strip() != "!test":
+    # Only respond to !test command (case-insensitive)
+    if message_text.strip().lower() != "!test":
         return None
     
     # Start building the response with sender name

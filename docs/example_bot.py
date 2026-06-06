@@ -29,21 +29,22 @@ def bot(sender_name, sender_key, message_text, is_dm, channel_key, channel_name,
         **kwargs: Forward compatibility for future parameters
     """
     
-    # Only respond to messages in #testnoord channel
-    if is_dm or channel_name != "#testnoord":
+    # Only respond to DMs or specific channels
+    allowed_channels = ["#testnoord", "#test", "#bot"]
+    if not is_dm and channel_name not in allowed_channels:
         return None
-    
+
     # Ignore our own outgoing messages to prevent loops
     if is_outgoing:
         return None
     
     # Only respond to !test command (case-insensitive)
-    if message_text.strip().lower() != "!test":
+    if message_text.strip().lower() != "!regio":
         return None
     
     # Start building the response with sender name
-    sender = sender_name or "Unknown"
-    response = f"Test received from {sender}"
+    sender = sender_name or f"Unknown"
+    response = f"✨️ Received from {sender}"
     
     # Calculate number of hops from path data
     if path and isinstance(path, str) and path_bytes_per_hop:
@@ -52,39 +53,30 @@ def bot(sender_name, sender_key, message_text, is_dm, channel_key, channel_name,
         # Convert hex string length to byte count, then divide by bytes per hop
         path_bytes = len(path) // 2  # 2 hex chars = 1 byte
         hop_count = path_bytes // path_bytes_per_hop
-        
         if hop_count == 0:
-            response += " with direct connection (0 hops)"
-        elif hop_count == 1:
-            response += " with 1 hop"
+            response += f" 📨 direct connection"
         else:
-            response += f" with {hop_count} hops"
+            response += f" 📨 with {hop_count} hop{'s' if hop_count != 1 else ''}"
         
     elif path and isinstance(path, str):
         # Legacy: assume 1-byte hops if path_bytes_per_hop not provided
         hop_count = len(path) // 2
         if hop_count == 0:
-            response += " with direct connection (0 hops)"
+            response += f" 📨 direct connection"
         else:
-            response += f" with {hop_count} hop{'s' if hop_count != 1 else ''}"
-    else:
-        # No path data available
-        response += " (path unknown)"
+            response += f" 📨 with {hop_count} hop{'s' if hop_count != 1 else ''}"
     
     # Calculate message delay if both timestamps are available
     if sender_timestamp and received_at and isinstance(sender_timestamp, int) and isinstance(received_at, int):
         delay_seconds = received_at - sender_timestamp
         if delay_seconds >= 0:
-            response += f". It took {delay_seconds} second{'s' if delay_seconds != 1 else ''} to reach me"
-        else:
-            # Clock skew - sender's clock is ahead
-            response += ". (clock skew detected)"
+            response += f"⏳ It took {delay_seconds} second{'s' if delay_seconds != 1 else ''} to reach me"
     
     # Add region information if available
     if region_name:
-        response += f". Region: {region_name}"
+        response += f". 🌐 Region: {region_name}"
     else:
-        response += ". Region: unknown"
+        response += f". 🌐 Regio not set/unknown"
     
     return response
 

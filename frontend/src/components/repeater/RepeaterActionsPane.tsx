@@ -6,12 +6,14 @@ export function ActionsPane({
   onSendFloodAdvert,
   onSyncClock,
   onReboot,
+  onDiscoverNeighbors,
   consoleLoading,
 }: {
   onSendZeroHopAdvert: () => void;
   onSendFloodAdvert: () => void;
   onSyncClock: () => void;
   onReboot: () => void;
+  onDiscoverNeighbors: () => void;
   consoleLoading: boolean;
 }) {
   const [confirmReboot, setConfirmReboot] = useState(false);
@@ -51,6 +53,9 @@ export function ActionsPane({
         </Button>
         <Button variant="outline" size="sm" onClick={onSyncClock} disabled={consoleLoading}>
           Sync Clock
+        </Button>
+        <Button variant="outline" size="sm" onClick={onDiscoverNeighbors} disabled={consoleLoading}>
+          Discover Neighbors
         </Button>
         <Button
           variant={confirmReboot ? 'destructive' : 'outline'}

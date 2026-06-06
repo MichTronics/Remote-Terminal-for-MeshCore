@@ -93,6 +93,7 @@ export function RepeaterDashboard({
     sendFloodAdvert,
     rebootRepeater,
     syncClock,
+    discoverNeighbors,
   } = useRepeaterDashboard(conversation, { hasAdvertLocation });
   const { password, setPassword, rememberPassword, setRememberPassword, persistAfterLogin } =
     useRememberedServerPassword('repeater', conversation.id);
@@ -392,6 +393,7 @@ export function RepeaterDashboard({
                   onSendFloodAdvert={sendFloodAdvert}
                   onSyncClock={syncClock}
                   onReboot={rebootRepeater}
+                  onDiscoverNeighbors={discoverNeighbors}
                   consoleLoading={consoleLoading}
                 />
               </div>

@@ -195,6 +195,7 @@ export interface UseRepeaterDashboardResult {
   sendFloodAdvert: () => Promise<void>;
   rebootRepeater: () => Promise<void>;
   syncClock: () => Promise<void>;
+  discoverNeighbors: () => Promise<void>;
 }
 
 interface UseRepeaterDashboardOptions {
@@ -495,6 +496,10 @@ export function useRepeaterDashboard(
     await sendConsoleCommand(`time ${epochSeconds}`);
   }, [sendConsoleCommand]);
 
+  const discoverNeighbors = useCallback(async () => {
+    await sendConsoleCommand('discover.neighbors');
+  }, [sendConsoleCommand]);
+
   return {
     loggedIn,
     loginLoading,
@@ -513,5 +518,6 @@ export function useRepeaterDashboard(
     sendFloodAdvert,
     rebootRepeater,
     syncClock,
+    discoverNeighbors,
   };
 }

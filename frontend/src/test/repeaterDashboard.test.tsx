@@ -45,6 +45,7 @@ const mockHook: {
   sendFloodAdvert: vi.fn(),
   rebootRepeater: vi.fn(),
   syncClock: vi.fn(),
+  discoverNeighbors: vi.fn(),
 };
 
 vi.mock('../hooks/useRepeaterDashboard', () => ({

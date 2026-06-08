@@ -21,10 +21,14 @@ DEFAULT_REGIONS = [
     "jp", "kr", "cn", "in", "sg",  # Asia
     "br", "ar", "cl",  # South America
     "za",  # Africa
-    "eu", "eu-west", "eu-east", "eu-north", "eu-south", "europe", # European regions
-    # Common regional/local codes Holland/Netherlands (for testing/demo purposes)
+    "eu", "eu-west", "eu-east", "eu-north", "eu-south", "europe", "bx", # European regions
+    # Common regional/local codes Holland/Netherlands
     "nl-dr", "nl-fl", "nl-fr", "nl-ge", "nl-gr", "nl-li", "nl-nb", "nl-nh", "nl-ov", "nl-ut", "nl-ze", "nl-zh",
     "nl-noord", "nl-zuid", "nl-oost", "nl-west", "nl-midden",
+    # Common regional/local codes Germany
+    "de-nord", "de-west", "de-mitte", "de-ost", "de-sued",
+    # Common regional/local codes United Kingdom
+    "eng", "eng-ne", "eng-nw", "eng-se", "eng-sw",
     # NL IATA Regions (for testing/demo purposes)
     "nl-grq", "nl-lwr", "nl-dhr", "nl-ley", "nl-ens", "nl-ams", "nl-utc", "nl-rtm", "nl-ude", "nl-glz", "nl-ein", "nl-woe", "nl-mst",
 ]

@@ -121,7 +121,7 @@ class BaseMqttPublisher(ABC):
         if self._client is None or not self.connected:
             return
         try:
-            logger.debug("%s publishing to %s", self._integration_label(), topic)
+            # logger.debug("%s publishing to %s", self._integration_label(), topic)
             await self._client.publish(topic, json.dumps(payload), retain=retain)
             # Track successful publish
             self._consecutive_publish_failures = 0

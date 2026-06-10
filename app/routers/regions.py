@@ -2,11 +2,11 @@
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models import Region, RegionCreate
 from app.packet_processor import derive_meshcore_region_key
-from app.repository import RegionRepository
+from app.repository import AppSettingsRepository, RegionRepository
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/settings/regions", tags=["settings", "regions"])
@@ -16,12 +16,12 @@ router = APIRouter(prefix="/settings/regions", tags=["settings", "regions"])
 DEFAULT_REGIONS = [
     # Country codes (ISO 3166-1 alpha-2)
     "us", "ca", "mx",  # North America
-    "nl", "de", "uk", "gb", "fr", "es", "it", "be", "ch", "at", "se", "no", "dk", "fi", "pl", "cz", "bx", # Europe
+    "nl", "de", "uk", "gb", "fr", "es", "it", "be", "ch", "at", "se", "no", "dk", "fi", "pl", "cz", # Europe
     "au", "nz",  # Oceania
     "jp", "kr", "cn", "in", "sg",  # Asia
     "br", "ar", "cl",  # South America
     "za",  # Africa
-    "eu", "eu-west", "eu-east", "eu-north", "eu-south", "europe", "bx", # European regions
+    "eu", "eu-west", "eu-east", "eu-north", "eu-south", "europe", "bx", # European regions (bx = Benelux)
     # Common regional/local codes Holland/Netherlands
     "nl-dr", "nl-fl", "nl-fr", "nl-ge", "nl-gr", "nl-li", "nl-nb", "nl-nh", "nl-ov", "nl-ut", "nl-ze", "nl-zh",
     "nl-noord", "nl-zuid", "nl-oost", "nl-west", "nl-midden",
@@ -32,6 +32,89 @@ DEFAULT_REGIONS = [
     # NL IATA Regions (for testing/demo purposes)
     "nl-grq", "nl-lwr", "nl-dhr", "nl-ley", "nl-ens", "nl-ams", "nl-utc", "nl-rtm", "nl-ude", "nl-glz", "nl-ein", "nl-woe", "nl-mst",
 ]
+
+# Region classification for smart sorting
+REGION_CATEGORIES = {
+    # Netherlands regional codes
+    "nl-regional": {
+        "nl-dr", "nl-fl", "nl-fr", "nl-ge", "nl-gr", "nl-li", "nl-nb", "nl-nh", "nl-ov", "nl-ut", "nl-ze", "nl-zh",
+        "nl-noord", "nl-zuid", "nl-oost", "nl-west", "nl-midden",
+    },
+    # Netherlands IATA codes
+    "nl-iata": {
+        "nl-grq", "nl-lwr", "nl-dhr", "nl-ley", "nl-ens", "nl-ams", "nl-utc", "nl-rtm", "nl-ude", "nl-glz", "nl-ein", "nl-woe", "nl-mst",
+    },
+    # Germany regional codes
+    "de-regional": {
+        "de-nord", "de-west", "de-mitte", "de-ost", "de-sued",
+    },
+    # UK regional codes
+    "uk-regional": {
+        "eng", "eng-ne", "eng-nw", "eng-se", "eng-sw",
+    },
+    # Country codes
+    "country": {
+        "us", "ca", "mx", "nl", "de", "uk", "gb", "fr", "es", "it", "be", "ch", "at", "se", "no", "dk", "fi", "pl", "cz", "bx",
+        "au", "nz", "jp", "kr", "cn", "in", "sg", "br", "ar", "cl", "za",
+    },
+    # European region codes
+    "eu-regional": {
+        "eu", "eu-west", "eu-east", "eu-north", "eu-south", "europe",
+    },
+}
+
+
+def smart_sort_regions(regions: list[Region], current_scope: str) -> list[Region]:
+    """Sort regions based on relevance to the current flood scope.
+    
+    Priority order depends on the current scope:
+    1. Exact match (always first)
+    2. Same country regional codes (e.g., for "nl-gr" → other "nl-*" regional codes)
+    3. Same country IATA codes (e.g., for "nl-gr" → "nl-grq", "nl-ams", etc.)
+    4. Country code itself (e.g., "nl")
+    5. Other European regions (if current scope is European)
+    6. All other regions (alphabetically)
+    """
+    if not current_scope:
+        # No scope set - return alphabetically
+        return sorted(regions, key=lambda r: r.name.lower())
+    
+    scope_lower = current_scope.lower()
+    
+    # Detect country prefix (e.g., "nl" from "nl-gr")
+    country_prefix = scope_lower.split("-")[0] if "-" in scope_lower else scope_lower
+    
+    def get_sort_key(region: Region) -> tuple[int, str]:
+        """Return (priority, name) tuple for sorting."""
+        name_lower = region.name.lower()
+        
+        # Priority 0: Exact match
+        if name_lower == scope_lower:
+            return (0, name_lower)
+        
+        # Priority 1: Same country regional codes
+        regional_key = f"{country_prefix}-regional"
+        if regional_key in REGION_CATEGORIES and name_lower in REGION_CATEGORIES[regional_key]:
+            return (1, name_lower)
+        
+        # Priority 2: Same country IATA codes
+        iata_key = f"{country_prefix}-iata"
+        if iata_key in REGION_CATEGORIES and name_lower in REGION_CATEGORIES[iata_key]:
+            return (2, name_lower)
+        
+        # Priority 3: Country code itself
+        if name_lower == country_prefix:
+            return (3, name_lower)
+        
+        # Priority 4: European regions (if current scope is European)
+        if country_prefix in {"nl", "de", "uk", "gb", "fr", "es", "it", "be", "ch", "at", "se", "no", "dk", "fi", "pl", "cz", "bx", "eu"}:
+            if name_lower in REGION_CATEGORIES["eu-regional"]:
+                return (4, name_lower)
+        
+        # Priority 5: Everything else
+        return (5, name_lower)
+    
+    return sorted(regions, key=get_sort_key)
 
 async def seed_default_regions() -> None:
     """Ensure default public regions exist in the database."""
@@ -58,9 +141,34 @@ async def seed_default_regions() -> None:
 
 
 @router.get("", response_model=list[Region])
-async def get_regions() -> list[Region]:
-    """Get all defined MeshCore transport regions."""
-    return await RegionRepository.get_all()
+async def get_regions(
+    sort_by_scope: str | None = Query(
+        default=None,
+        description="Sort regions by relevance to this flood scope (e.g., 'nl-gr'). If omitted, uses current app flood_scope.",
+    ),
+) -> list[Region]:
+    """Get all defined MeshCore transport regions.
+    
+    Regions are intelligently sorted based on the current or provided flood scope:
+    - Exact match appears first
+    - Same-country regional codes
+    - Same-country IATA codes  
+    - Country code
+    - Related regional groups
+    - All others alphabetically
+    """
+    regions = await RegionRepository.get_all()
+    
+    # Determine which scope to use for sorting
+    if sort_by_scope is None:
+        # Use current app flood_scope
+        settings = await AppSettingsRepository.get()
+        sort_scope = settings.flood_scope
+    else:
+        sort_scope = sort_by_scope
+    
+    # Apply smart sorting
+    return smart_sort_regions(regions, sort_scope)
 
 
 @router.post("", response_model=Region, status_code=201)

@@ -264,6 +264,7 @@ async def create_dm_message_from_decrypted(
     outgoing: bool = False,
     realtime: bool = True,
     packet_hash: str | None = None,
+    region_name: str | None = None,
 ) -> int | None:
     """Store a decrypted direct message via the shared message service."""
     return await _create_dm_message_from_decrypted(
@@ -280,6 +281,7 @@ async def create_dm_message_from_decrypted(
         realtime=realtime,
         broadcast_fn=broadcast_event,
         packet_hash=packet_hash,
+        region_name=region_name,
     )
 
 
@@ -534,7 +536,7 @@ async def process_raw_packet(
     elif payload_type == PayloadType.TEXT_MESSAGE:
         # Try to decrypt direct messages using stored private key and known contacts
         decrypt_result = await _process_direct_message(
-            raw_bytes, packet_id, ts, packet_info, rssi=rssi, snr=snr, packet_hash=pkt_hash
+            raw_bytes, packet_id, ts, packet_info, rssi=rssi, snr=snr, packet_hash=pkt_hash, region_name=region_name
         )
         if decrypt_result:
             result.update(decrypt_result)
@@ -794,6 +796,7 @@ async def _process_direct_message(
     rssi: int | None = None,
     snr: float | None = None,
     packet_hash: str | None = None,
+    region_name: str | None = None,
 ) -> dict | None:
     """
     Process a TEXT_MESSAGE (direct message) packet.
@@ -927,6 +930,7 @@ async def _process_direct_message(
                 snr=snr,
                 outgoing=effective_outgoing,
                 packet_hash=packet_hash,
+                region_name=region_name,
             )
 
             return {

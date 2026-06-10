@@ -155,6 +155,7 @@ async def _store_direct_message(
     best_effort_content_dedup: bool,
     linked_packet_dedup: bool,
     packet_hash: str | None = None,
+    region_name: str | None = None,
     message_repository=MessageRepository,
     contact_repository=ContactRepository,
     raw_packet_repository=RawPacketRepository,
@@ -234,10 +235,10 @@ async def _store_direct_message(
         if packet_id is not None:
             await raw_packet_repository.mark_decrypted(packet_id, msg_id)
         
-        # Fetch region_name from raw_packets if packet_id is available
-        region_name = (
-            await raw_packet_repository.get_region_name(packet_id) if packet_id else None
-        )
+        # Fetch region_name from raw_packets if not provided and packet_id is available
+        resolved_region_name = region_name
+        if resolved_region_name is None and packet_id:
+            resolved_region_name = await raw_packet_repository.get_region_name(packet_id)
 
         message = build_message_model(
             message_id=msg_id,
@@ -259,7 +260,7 @@ async def _store_direct_message(
             broadcast_fn=broadcast_fn,
             realtime=realtime,
             packet_hash=packet_hash,
-            region_name=region_name,
+            region_name=resolved_region_name,
         )
 
         if update_last_contacted_key:
@@ -292,6 +293,7 @@ async def ingest_decrypted_direct_message(
     realtime: bool = True,
     broadcast_fn: BroadcastFn,
     packet_hash: str | None = None,
+    region_name: str | None = None,
     contact_repository=ContactRepository,
 ) -> Message | None:
     conversation_key = their_public_key.lower()
@@ -352,6 +354,7 @@ async def ingest_decrypted_direct_message(
         best_effort_content_dedup=outgoing,
         linked_packet_dedup=True,
         packet_hash=packet_hash,
+        region_name=region_name,
     )
     if message is None:
         return None

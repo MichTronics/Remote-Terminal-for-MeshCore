@@ -226,7 +226,7 @@ class TestSystemdEscape:
         assert not failures, "Not double-quoted:\n" + "\n".join(failures)
 
     def test_function_present_in_installer(self):
-        with open(SERVICE_SCRIPT) as f:
+        with open(SERVICE_SCRIPT, encoding="utf-8") as f:
             content = f.read()
         assert "systemd_escape_env_value()" in content
         assert 'systemd_escape_env_value "$AUTH_USERNAME"' in content
@@ -256,7 +256,7 @@ class TestYamlQuote:
         assert not failures, "Not single-quoted:\n" + "\n".join(failures)
 
     def test_function_present_in_installer(self):
-        with open(DOCKER_SCRIPT) as f:
+        with open(DOCKER_SCRIPT, encoding="utf-8") as f:
             content = f.read()
         assert "yaml_quote()" in content
         assert 'yaml_quote "$AUTH_USERNAME"' in content

@@ -225,18 +225,63 @@ export function decodePacketSummary(
       case PayloadType.Ack:
         summary = `ACK${pathStr}`;
         break;
-      case PayloadType.Request:
-        summary = `Request${pathStr}`;
+      case PayloadType.Request: {
+        const reqPayload = decoded.payload.decoded as {
+          sourceHash?: string;
+          destinationHash?: string;
+        } | null;
+        if (reqPayload?.sourceHash) {
+          summary = `Request from ${reqPayload.sourceHash}${pathStr}`;
+        } else {
+          summary = `Request${pathStr}`;
+        }
         break;
-      case PayloadType.Response:
-        summary = `Response${pathStr}`;
+      }
+      case PayloadType.Response: {
+        const respPayload = decoded.payload.decoded as {
+          sourceHash?: string;
+          destinationHash?: string;
+        } | null;
+        if (respPayload?.sourceHash) {
+          summary = `Response from ${respPayload.sourceHash}${pathStr}`;
+        } else {
+          summary = `Response${pathStr}`;
+        }
         break;
+      }
+      case PayloadType.AnonRequest: {
+        const anonPayload = decoded.payload.decoded as {
+          senderPublicKey?: string;
+          destinationHash?: string;
+        } | null;
+        if (anonPayload?.senderPublicKey) {
+          summary = `AnonRequest from ${anonPayload.senderPublicKey.slice(0, 8)}...${pathStr}`;
+        } else {
+          summary = `AnonRequest${pathStr}`;
+        }
+        break;
+      }
       case PayloadType.Trace:
         summary = `Trace${pathStr}`;
         break;
       case PayloadType.Path:
         summary = `Path${pathStr}`;
         break;
+      case PayloadType.Control: {
+        const ctrlPayload = decoded.payload.decoded as {
+          subType?: number;
+          publicKey?: string;
+        } | null;
+        if (ctrlPayload?.publicKey) {
+          const subTypeName = Utils.getControlSubTypeName
+            ? Utils.getControlSubTypeName(ctrlPayload.subType ?? 0)
+            : 'Control';
+          summary = `${subTypeName} from ${ctrlPayload.publicKey.slice(0, 8)}...${pathStr}`;
+        } else {
+          summary = `Control${pathStr}`;
+        }
+        break;
+      }
       default:
         summary = `${payloadTypeName}${pathStr}`;
         break;

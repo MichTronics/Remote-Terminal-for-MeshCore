@@ -44,6 +44,48 @@ describe('appendRawPacketUnique', () => {
     expect(afterSecond[0].data).toBe('bb');
   });
 
+  it('preserves longest path when packets arrive out of order', () => {
+    // Create packets with actual path data (simplified for test)
+    // In reality, these would be full MeshCore packet hex
+    const sevenHops = createPacket({ 
+      id: 10, 
+      observation_id: 200, 
+      data: '00010203040506' // Shorter path
+    });
+    const nineHops = createPacket({ 
+      id: 10, 
+      observation_id: 201, 
+      data: '000102030405060708' // Longer path
+    });
+    const eightHops = createPacket({ 
+      id: 10, 
+      observation_id: 202, 
+      data: '0001020304050607' // Medium path
+    });
+
+    // Arrive in order: 7, 9, 8
+    let state: RawPacket[] = [];
+    state = appendRawPacketUnique(state, sevenHops, 500);
+    state = appendRawPacketUnique(state, nineHops, 500);
+    state = appendRawPacketUnique(state, eightHops, 500);
+
+    // Should preserve the 9-hop path data even though 8-hop arrived last
+    expect(state).toHaveLength(1);
+    expect(state[0].observation_id).toBe(202); // Latest observation
+    expect(state[0].data).toBe('000102030405060708'); // But longest path data
+  });
+
+  it('updates to longer path when it arrives later', () => {
+    const shortPath = createPacket({ id: 15, observation_id: 300, data: 'aabb' });
+    const longPath = createPacket({ id: 15, observation_id: 301, data: 'aabbccdd' });
+
+    const afterFirst = appendRawPacketUnique([], shortPath, 500);
+    const afterSecond = appendRawPacketUnique(afterFirst, longPath, 500);
+
+    expect(afterSecond).toHaveLength(1);
+    expect(afterSecond[0].data).toBe('aabbccdd'); // Longer path wins
+  });
+
   it('drops exact duplicate observations', () => {
     const packet = createPacket({ id: 5, observation_id: 100 });
 

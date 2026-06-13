@@ -25,8 +25,10 @@ DEFAULT_REGIONS = [
     # Common regional/local codes Holland/Netherlands
     "nl-dr", "nl-fl", "nl-fr", "nl-ge", "nl-gr", "nl-li", "nl-nb", "nl-nh", "nl-ov", "nl-ut", "nl-ze", "nl-zh",
     "nl-noord", "nl-zuid", "nl-oost", "nl-west", "nl-midden",
+    # Common city/local codes Holland/Netherlands
+    "nl-hag", "nl-ein", "nl-ams", "nl-aer", "nl-dev", "nl-lid", "nl-ass", "nl-ede", "nl-ens", "nl-rtm",
     # Common regional/local codes Germany
-    "de-nord", "de-west", "de-mitte", "de-ost", "de-sued",
+    "de-nord", "de-west", "de-mitte", "de-ost", "de-sued", "de-ni", "de-nw",
     # Common regional/local codes United Kingdom
     "eng", "eng-ne", "eng-nw", "eng-se", "eng-sw",
     # NL IATA Regions (for testing/demo purposes)
@@ -39,6 +41,7 @@ REGION_CATEGORIES = {
     "nl-regional": {
         "nl-dr", "nl-fl", "nl-fr", "nl-ge", "nl-gr", "nl-li", "nl-nb", "nl-nh", "nl-ov", "nl-ut", "nl-ze", "nl-zh",
         "nl-noord", "nl-zuid", "nl-oost", "nl-west", "nl-midden",
+        "nl-hag", "nl-ein", "nl-ams", "nl-aer", "nl-dev", "nl-lid", "nl-ass", "nl-ede", "nl-ens", "nl-rtm", "nl-bx",
     },
     # Netherlands IATA codes
     "nl-iata": {
@@ -46,7 +49,7 @@ REGION_CATEGORIES = {
     },
     # Germany regional codes
     "de-regional": {
-        "de-nord", "de-west", "de-mitte", "de-ost", "de-sued",
+        "de-nord", "de-west", "de-mitte", "de-ost", "de-sued", "de-ni", "de-nw",
     },
     # UK regional codes
     "uk-regional": {

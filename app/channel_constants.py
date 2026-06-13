@@ -1,5 +1,5 @@
 PUBLIC_CHANNEL_KEY = "8B3387E9C5CDEA6AC9E5EDBAA115CD72"
-PUBLIC_CHANNEL_NAME = "Public"
+PUBLIC_CHANNEL_NAME = "public"
 
 
 def is_public_channel_key(key: str) -> bool:

@@ -281,6 +281,11 @@ export interface BulkCreateHashtagChannelsResult {
   message: string;
 }
 
+export interface BulkHashtagChannelInput {
+  name: string;
+  key?: string;
+}
+
 export interface PathHashWidthStats {
   total_packets: number;
   single_byte: number;
@@ -357,7 +362,53 @@ export interface ResendChannelMessageResponse {
   message?: Message;
 }
 
-type ConversationType = 'contact' | 'channel' | 'raw' | 'map' | 'visualizer' | 'search' | 'trace';
+export interface SpamRepeaterStat {
+  hop: string;
+  observation_count: number;
+  route_count: number;
+  message_count: number;
+  conversation_count: number;
+  source_side_count: number;
+  radio_side_count: number;
+  middle_count: number;
+  first_seen: number | null;
+  last_seen: number | null;
+  avg_rssi: number | null;
+  avg_snr: number | null;
+}
+
+export interface SpamRouteStat {
+  path: string;
+  path_len: number;
+  hop_count: number;
+  hop_tokens: string[];
+  route: string;
+  observation_count: number;
+  message_count: number;
+  conversation_count: number;
+  first_seen: number | null;
+  last_seen: number | null;
+  avg_rssi: number | null;
+  avg_snr: number | null;
+}
+
+export interface SpamRouteStatsResponse {
+  window_hours: number | null;
+  total_observations: number;
+  total_messages: number;
+  repeaters: SpamRepeaterStat[];
+  routes: SpamRouteStat[];
+}
+
+type ConversationType =
+  | 'contact'
+  | 'channel'
+  | 'raw'
+  | 'map'
+  | 'visualizer'
+  | 'search'
+  | 'trace'
+  | 'spam';
 
 export interface Conversation {
   type: ConversationType;
@@ -387,6 +438,8 @@ export interface RawPacket {
     contact_key: string | null;
     sender_timestamp: number | null;
     message: string | null;
+    speed?: number | null;
+    heading?: number | null;
   } | null;
 }
 

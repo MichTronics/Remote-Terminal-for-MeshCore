@@ -34,10 +34,19 @@ class CreateChannelRequest(BaseModel):
     )
 
 
+class BulkCreateHashtagChannelItem(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+    key: str | None = None
+
+
 class BulkCreateHashtagChannelsRequest(BaseModel):
     channel_names: list[str] = Field(
-        min_length=1,
+        default_factory=list,
         description="List of hashtag room names. Leading # is optional per entry.",
+    )
+    channels: list[BulkCreateHashtagChannelItem] = Field(
+        default_factory=list,
+        description="Optional exact channel definitions. Keys are 32-character hex secrets.",
     )
     try_historical: bool = Field(
         default=False,
@@ -93,7 +102,7 @@ def _derive_channel_identity(
                 )
         return PUBLIC_CHANNEL_KEY, PUBLIC_CHANNEL_NAME, False
 
-    if request_key and not is_hashtag:
+    if request_key:
         try:
             key_bytes = bytes.fromhex(request_key)
             if len(key_bytes) != 16:
@@ -108,7 +117,7 @@ def _derive_channel_identity(
                 status_code=400,
                 detail=f'The canonical Public key may only be used for "{PUBLIC_CHANNEL_NAME}"',
             )
-        return key_hex, requested_name, False
+        return key_hex, requested_name, is_hashtag
 
     key_bytes = sha256(requested_name.encode("utf-8")).digest()[:16]
     return key_bytes.hex().upper(), requested_name, is_hashtag
@@ -259,14 +268,25 @@ async def bulk_create_hashtag_channels(
     decrypt_started = False
     decrypt_total_packets = 0
     decrypt_targets: list[tuple[bytes, str, str]] = []
+    entries: list[BulkCreateHashtagChannelItem] = [
+        BulkCreateHashtagChannelItem(name=name) for name in request.channel_names
+    ]
+    entries.extend(request.channels)
 
-    for raw_name in request.channel_names:
-        normalized_name = _normalize_bulk_hashtag_name(raw_name)
+    if not entries:
+        raise HTTPException(status_code=400, detail="Enter at least one channel")
+
+    for entry in entries:
+        normalized_name = _normalize_bulk_hashtag_name(entry.name)
         if normalized_name is None:
-            invalid_names.append(raw_name)
+            invalid_names.append(entry.name)
             continue
 
-        key_hex, channel_name, is_hashtag = _derive_channel_identity(normalized_name)
+        if entry.key is not None and not re.fullmatch(r"[0-9A-Fa-f]{32}", entry.key):
+            invalid_names.append(entry.name)
+            continue
+
+        key_hex, channel_name, is_hashtag = _derive_channel_identity(normalized_name, entry.key)
         existing = await ChannelRepository.get_by_key(key_hex)
         if existing is not None:
             existing_count += 1

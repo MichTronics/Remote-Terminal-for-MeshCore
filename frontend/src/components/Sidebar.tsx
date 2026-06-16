@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
   BellOff,
+  Activity,
   Cable,
   ChartNetwork,
   CheckCheck,
@@ -172,7 +173,7 @@ export function Sidebar({
   };
 
   const isActive = (
-    type: 'contact' | 'channel' | 'raw' | 'map' | 'visualizer' | 'search' | 'trace',
+    type: 'contact' | 'channel' | 'raw' | 'map' | 'visualizer' | 'search' | 'trace' | 'spam',
     id: string
   ) => activeConversation?.type === type && activeConversation?.id === id;
 
@@ -725,6 +726,18 @@ export function Sidebar({
               type: 'trace',
               id: 'trace',
               name: 'Trace',
+            }),
+        }),
+        renderSidebarActionRow({
+          key: 'tool-spam',
+          active: isActive('spam', 'spam'),
+          icon: <Activity className="h-4 w-4" />,
+          label: 'Spam Paths',
+          onClick: () =>
+            handleSelectConversation({
+              type: 'spam',
+              id: 'spam',
+              name: 'Spam Path Analysis',
             }),
         }),
         renderSidebarActionRow({

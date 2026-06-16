@@ -23,6 +23,7 @@ from app.database import db
 from app.decoder import (
     DecryptedDirectMessage,
     PacketInfo,
+    ParsedLocation,
     PayloadType,
     derive_public_key,
     parse_advertisement,
@@ -128,6 +129,28 @@ def calculate_meshcore_transport_code(
     return code
 
 
+def _location_decrypted_info(
+    location: ParsedLocation,
+    display_name: str,
+    contact_key: str | None = None,
+) -> dict:
+    message = (
+        f"📍 {display_name}: {location.lat:.6f}, {location.lon:.6f} "
+        f"(alt: {location.altitude}m, speed: {location.speed:.1f}m/s, "
+        f"hdg: {location.heading:.1f}°, sats: {location.satellites}, "
+        f"batt: {location.battery}mV)"
+    )
+    return {
+        "decrypted": True,
+        "sender": display_name,
+        "message": message,
+        "sender_timestamp": location.timestamp,
+        "contact_key": contact_key,
+        "speed": location.speed,
+        "heading": location.heading,
+    }
+
+
 def packet_matches_meshcore_region(
     packet_info: PacketInfo,
     region_name: str | None = None,
@@ -151,13 +174,13 @@ def packet_matches_meshcore_region(
         region_key=region_key,
     )
     observed = int.from_bytes(packet_info.transport_codes[:2], "little")
-    
+
     return expected == observed
 
 
 async def identify_packet_region(packet_info: PacketInfo) -> str | None:
     """Identify which region a packet belongs to by testing against all known regions.
-    
+
     Returns the region name if a match is found, None otherwise.
     """
     if packet_info.transport_codes is None or len(packet_info.transport_codes) < 2:
@@ -171,7 +194,7 @@ async def identify_packet_region(packet_info: PacketInfo) -> str | None:
 
     # Get all known regions
     regions = await RegionRepository.get_all()
-    
+
     observed_code = int.from_bytes(packet_info.transport_codes[:2], "little")
     logger.debug(
         "Identifying region: transport_code=0x%04x (%d), payload_type=%s, testing %d regions",
@@ -180,7 +203,7 @@ async def identify_packet_region(packet_info: PacketInfo) -> str | None:
         packet_info.payload_type.name,
         len(regions),
     )
-    
+
     # Test packet against each region
     for idx, region in enumerate(regions):
         region_key_bytes = None
@@ -193,7 +216,7 @@ async def identify_packet_region(packet_info: PacketInfo) -> str | None:
         else:
             # Invalid state - public flag False but no key stored
             continue
-        
+
         # Calculate expected code for first few regions (debug)
         if idx < 3:
             expected_code = calculate_meshcore_transport_code(
@@ -203,7 +226,7 @@ async def identify_packet_region(packet_info: PacketInfo) -> str | None:
                 region_key=region_key_bytes,
             )
             logger.debug("  Region '%s': expected=0x%04x", region.name, expected_code)
-            
+
         if packet_matches_meshcore_region(
             packet_info,
             region_name=None,
@@ -211,7 +234,7 @@ async def identify_packet_region(packet_info: PacketInfo) -> str | None:
         ):
             logger.info("✓ Region identified: %s", region.name)
             return region.name
-    
+
     logger.debug("✗ No region match found")
     return None
 
@@ -537,7 +560,14 @@ async def process_raw_packet(
     elif payload_type == PayloadType.TEXT_MESSAGE:
         # Try to decrypt direct messages using stored private key and known contacts
         decrypt_result = await _process_direct_message(
-            raw_bytes, packet_id, ts, packet_info, rssi=rssi, snr=snr, packet_hash=pkt_hash, region_name=region_name
+            raw_bytes,
+            packet_id,
+            ts,
+            packet_info,
+            rssi=rssi,
+            snr=snr,
+            packet_hash=pkt_hash,
+            region_name=region_name,
         )
         if decrypt_result:
             result.update(decrypt_result)
@@ -573,6 +603,8 @@ async def process_raw_packet(
             contact_key=result.get("contact_key"),
             sender_timestamp=result.get("sender_timestamp"),
             message=result.get("message"),
+            speed=result.get("speed"),
+            heading=result.get("heading"),
         )
         if result["decrypted"]
         else None,
@@ -701,7 +733,7 @@ async def _process_advertisement(
         transport_info = f" transport_codes={transport_codes.hex()}"
         if region_name:
             transport_info += f" region={region_name}"
-    
+
     logger.debug(
         "Parsed advertisement from %s: %s (role=%d, lat=%s, lon=%s, advert_path_len=%d%s)",
         advert.public_key[:12],
@@ -896,18 +928,7 @@ async def _process_location(
         )
         # Return decoded info for raw packet feed display
         display_name = location.name or f"Node {location.node_id[:8]}"
-        message = (
-            f"📍 {display_name}: {location.lat:.6f}, {location.lon:.6f} "
-            f"(alt: {location.altitude}m, speed: {location.speed:.1f}m/s, "
-            f"hdg: {location.heading:.1f}°, sats: {location.satellites}, "
-            f"batt: {location.battery}mV)"
-        )
-        return {
-            "decrypted": True,
-            "sender": display_name,
-            "message": message,
-            "sender_timestamp": location.timestamp,
-        }
+        return _location_decrypted_info(location, display_name)
 
     # Update the existing contact with location and tracker data
     # Use the location packet timestamp for last_seen, and preserve the contact's
@@ -968,20 +989,10 @@ async def _process_location(
         )
 
     # Return decoded info for raw packet feed display
-    display_name = location.name or db_contact.name if db_contact else f"Node {location.node_id[:8]}"
-    message = (
-        f"📍 {display_name}: {location.lat:.6f}, {location.lon:.6f} "
-        f"(alt: {location.altitude}m, speed: {location.speed:.1f}m/s, "
-        f"hdg: {location.heading:.1f}°, sats: {location.satellites}, "
-        f"batt: {location.battery}mV)"
+    display_name = (
+        location.name or db_contact.name if db_contact else f"Node {location.node_id[:8]}"
     )
-    return {
-        "decrypted": True,
-        "sender": display_name,
-        "message": message,
-        "sender_timestamp": location.timestamp,
-        "contact_key": contact.public_key if contact else None,
-    }
+    return _location_decrypted_info(location, display_name, contact.public_key if contact else None)
 
 
 async def _process_direct_message(
@@ -1244,11 +1255,11 @@ def _haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -
     """
     Calculate the great-circle distance between two points on Earth in kilometers.
     Uses the Haversine formula.
-    
+
     Args:
         lat1, lon1: First point coordinates (decimal degrees)
         lat2, lon2: Second point coordinates (decimal degrees)
-    
+
     Returns:
         Distance in kilometers
     """
@@ -1265,7 +1276,7 @@ def _haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -
     # Haversine formula
     a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    
+
     return R * c
 
 
@@ -1315,7 +1326,7 @@ async def _update_last_seen_for_path_hops(
 
     # Resolve hop identifiers to contacts with position tracking
     hop_contacts: list[Contact | None] = []
-    
+
     # Validate hop identifier length based on hash_size
     expected_prefix_len = hash_size * 2  # 1-byte=2 chars, 2-byte=4 chars, 3-byte=6 chars
 
@@ -1330,7 +1341,7 @@ async def _update_last_seen_for_path_hops(
 
             # Use indexed query on first byte (2 hex chars)
             candidates = await ContactRepository.get_by_pubkey_first_byte(hop_id.lower())
-            
+
             # If exactly one match, use it; otherwise mark as ambiguous
             if len(candidates) == 1:
                 hop_contacts.append(candidates[0])
@@ -1353,7 +1364,7 @@ async def _update_last_seen_for_path_hops(
 
             # Find contacts whose public key starts with this hop identifier
             matches = [c for c in all_contacts if c.public_key.lower().startswith(hop_prefix)]
-            
+
             # Only use if exactly one match
             if len(matches) == 1:
                 hop_contacts.append(matches[0])
@@ -1367,21 +1378,23 @@ async def _update_last_seen_for_path_hops(
     for i, contact in enumerate(hop_contacts):
         if contact is None:
             continue
-        
+
         # Check distance from previous hop (if available)
         if i > 0:
             prev_contact = hop_contacts[i - 1]
-            
+
             # If both hops have GPS data, check distance
-            if (prev_contact is not None and
-                prev_contact.lat is not None and prev_contact.lon is not None and
-                contact.lat is not None and contact.lon is not None):
-                
+            if (
+                prev_contact is not None
+                and prev_contact.lat is not None
+                and prev_contact.lon is not None
+                and contact.lat is not None
+                and contact.lon is not None
+            ):
                 distance_km = _haversine_distance_km(
-                    prev_contact.lat, prev_contact.lon,
-                    contact.lat, contact.lon
+                    prev_contact.lat, prev_contact.lon, contact.lat, contact.lon
                 )
-                
+
                 if distance_km > MAX_HOP_DISTANCE_KM:
                     # Too far apart - likely a hash collision
                     logger.debug(
@@ -1393,7 +1406,7 @@ async def _update_last_seen_for_path_hops(
                     )
                     filtered_count += 1
                     continue
-        
+
         # Either within range, or can't verify (missing GPS) - update it
         verified_keys.add(contact.public_key)
 

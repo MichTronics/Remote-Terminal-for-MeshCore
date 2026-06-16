@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { NewMessageModal } from '../components/NewMessageModal';
 import { toast } from '../components/ui/sonner';
+import { MESHWIKI_PUBLIC_CHANNELS } from '../utils/meshwikiPublicChannels';
 
 // Mock sonner (toast)
 vi.mock('../components/ui/sonner', () => ({
@@ -157,6 +158,22 @@ describe('NewMessageModal form reset', () => {
 
       expect(onBulkAddHashtagChannels).not.toHaveBeenCalled();
       expect(screen.getByText('Invalid channel names: bad_room')).toBeTruthy();
+    });
+
+    it('adds the MeshWiki public channel list with explicit keys', async () => {
+      const user = userEvent.setup();
+      renderModal(true, { showBulkAddChannelTab: true });
+
+      await user.click(
+        screen.getByRole('button', {
+          name: `Add MeshWiki Public List (${MESHWIKI_PUBLIC_CHANNELS.length})`,
+        })
+      );
+
+      await waitFor(() => {
+        expect(onBulkAddHashtagChannels).toHaveBeenCalledWith(MESHWIKI_PUBLIC_CHANNELS, false);
+      });
+      expect(onClose).toHaveBeenCalled();
     });
   });
 

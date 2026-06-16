@@ -2,6 +2,7 @@ import type {
   AppSettings,
   AppSettingsUpdate,
   BulkCreateHashtagChannelsResult,
+  BulkHashtagChannelInput,
   Channel,
   ChannelDetail,
   CommandResponse,
@@ -41,6 +42,7 @@ import type {
   TrackedTelemetryContactsResponse,
   TrackedTelemetryResponse,
   StatisticsResponse,
+  SpamRouteStatsResponse,
   TraceResponse,
   UnreadCounts,
 } from './types';
@@ -197,10 +199,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name, key }),
     }),
-  bulkCreateHashtagChannels: (channelNames: string[], tryHistorical?: boolean) =>
+  bulkCreateHashtagChannels: (
+    channels: BulkHashtagChannelInput[] | string[],
+    tryHistorical?: boolean
+  ) =>
     fetchJson<BulkCreateHashtagChannelsResult>('/channels/bulk-hashtag', {
       method: 'POST',
-      body: JSON.stringify({ channel_names: channelNames, try_historical: tryHistorical }),
+      body: JSON.stringify({
+        channels: channels.map((channel) =>
+          typeof channel === 'string' ? { name: channel } : channel
+        ),
+        try_historical: tryHistorical,
+      }),
     }),
   deleteChannel: (key: string) =>
     fetchJson<{ status: string }>(`/channels/${key}`, { method: 'DELETE' }),
@@ -263,6 +273,22 @@ export const api = {
       `/messages/around/${messageId}${query ? `?${query}` : ''}`,
       { signal }
     );
+  },
+  getSpamRouteStats: (params?: {
+    windowHours?: number;
+    limit?: number;
+    repeaterLimit?: number;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.windowHours !== undefined) {
+      searchParams.set('window_hours', params.windowHours.toString());
+    }
+    if (params?.limit !== undefined) searchParams.set('limit', params.limit.toString());
+    if (params?.repeaterLimit !== undefined) {
+      searchParams.set('repeater_limit', params.repeaterLimit.toString());
+    }
+    const query = searchParams.toString();
+    return fetchJson<SpamRouteStatsResponse>(`/messages/spam/routes${query ? `?${query}` : ''}`);
   },
   sendDirectMessage: (destination: string, text: string) =>
     fetchJson<Message>('/messages/direct', {

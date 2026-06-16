@@ -3,13 +3,18 @@ Debug script to check if a LOCATION packet node_id matches any contacts.
 """
 import asyncio
 import sys
-from app.database import get_session
-from app.repository.contacts import ContactRepository
 
 async def check_node_match(node_id: str):
     """Check if any contacts match the given node_id prefix."""
-    async with get_session() as session:
-        contacts = await ContactRepository.get_all()
+    # Import after asyncio is set up to ensure database connects properly
+    from app.database import db
+    from app.repository.contacts import ContactRepository
+    
+    # Ensure database is connected
+    if not db._pool:
+        await db.connect()
+    
+    contacts = await ContactRepository.get_all()
         
     print(f"\nSearching for contacts matching node_id: {node_id}")
     print(f"Total contacts: {len(contacts)}\n")

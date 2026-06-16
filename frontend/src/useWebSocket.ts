@@ -154,6 +154,10 @@ export function useWebSocket(options: UseWebSocketOptions) {
           case 'pong':
             // Heartbeat response, ignore
             break;
+          case 'location':
+            // Location tracker event - contact updates are handled via 'contact' event
+            // This provides additional telemetry but doesn't need separate UI handling
+            break;
           case 'unknown':
             console.warn('Unknown WebSocket message type:', msg.rawType);
         }

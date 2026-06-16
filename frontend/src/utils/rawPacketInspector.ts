@@ -150,6 +150,153 @@ function safeValidate(hexData: string): string[] {
   }
 }
 
+function generateLocationPayloadFields(
+  payloadHex: string,
+  payloadStartByte: number
+): PacketByteField[] {
+  // LOCATION packet structure (all multi-byte values are big-endian):
+  // 0-3: Magic ("MCL1")
+  // 4: Version
+  // 5: Flags
+  // 6-9: Node ID (4 bytes)
+  // 10-13: Latitude (int32 BE, microdegrees)
+  // 14-17: Longitude (int32 BE, microdegrees)
+  // 18-19: Altitude (int16 BE, metres)
+  // 20-21: Speed (uint16 BE, cm/s)
+  // 22-23: Heading (uint16 BE, centidegrees)
+  // 24: Satellites
+  // 25-26: Battery (uint16 BE, millivolts)
+  // 27-30: Timestamp (uint32 BE, Unix time)
+  // 31: Name length
+  // 32+: Name (UTF-8, up to 24 bytes)
+
+  const bytes = payloadHex.match(/.{2}/g) ?? [];
+  if (bytes.length < 32) {
+    return [];
+  }
+
+  const fields: PacketByteField[] = [];
+
+  // Helper to parse big-endian integers
+  const parseBE = (start: number, len: number, signed: boolean): number => {
+    const hexValue = bytes.slice(start, start + len).join('');
+    let value = parseInt(hexValue, 16);
+    if (signed && len > 0) {
+      const max = Math.pow(2, len * 8);
+      if (value >= max / 2) {
+        value -= max;
+      }
+    }
+    return value;
+  };
+
+  const magic = bytes.slice(0, 4).map((b) => String.fromCharCode(parseInt(b, 16))).join('');
+  const version = parseInt(bytes[4], 16);
+  const flags = parseInt(bytes[5], 16);
+  const nodeId = bytes.slice(6, 10).join('');
+  const latMicro = parseBE(10, 4, true);
+  const lonMicro = parseBE(14, 4, true);
+  const lat = latMicro / 1_000_000;
+  const lon = lonMicro / 1_000_000;
+  const altitude = parseBE(18, 2, true);
+  const speedCm = parseBE(20, 2, false);
+  const speed = speedCm / 100;
+  const headingCenti = parseBE(22, 2, false);
+  const heading = headingCenti / 100;
+  const satellites = parseInt(bytes[24], 16);
+  const battery = parseBE(25, 2, false);
+  const timestamp = parseBE(27, 4, false);
+  const nameLen = parseInt(bytes[31], 16);
+
+  const createField = (
+    name: string,
+    start: number,
+    end: number,
+    value: string,
+    description: string
+  ): PacketByteField => ({
+    id: `location-${name.toLowerCase().replace(/\s+/g, '-')}`,
+    scope: 'payload',
+    name,
+    description,
+    value,
+    startByte: start,
+    endByte: end,
+    absoluteStartByte: payloadStartByte + start,
+    absoluteEndByte: payloadStartByte + end,
+  });
+
+  fields.push(createField('Magic', 0, 3, bytes.slice(0, 4).join(' '), `Magic bytes: "${magic}"`));
+  fields.push(createField('Version', 4, 4, bytes[4], `Protocol version: ${version}`));
+  fields.push(createField('Flags', 5, 5, bytes[5], `Reserved flags: 0x${bytes[5]}`));
+  fields.push(
+    createField('Node ID', 6, 9, bytes.slice(6, 10).join(' '), `First 4 bytes of public key: ${nodeId}`)
+  );
+  fields.push(
+    createField(
+      'Latitude',
+      10,
+      13,
+      bytes.slice(10, 14).join(' '),
+      `Latitude: ${lat.toFixed(6)}° (${latMicro} microdegrees, big-endian)`
+    )
+  );
+  fields.push(
+    createField(
+      'Longitude',
+      14,
+      17,
+      bytes.slice(14, 18).join(' '),
+      `Longitude: ${lon.toFixed(6)}° (${lonMicro} microdegrees, big-endian)`
+    )
+  );
+  fields.push(
+    createField('Altitude', 18, 19, bytes.slice(18, 20).join(' '), `Altitude: ${altitude}m (big-endian)`)
+  );
+  fields.push(
+    createField(
+      'Speed',
+      20,
+      21,
+      bytes.slice(20, 22).join(' '),
+      `Speed: ${speed.toFixed(1)}m/s (${speedCm}cm/s, big-endian)`
+    )
+  );
+  fields.push(
+    createField(
+      'Heading',
+      22,
+      23,
+      bytes.slice(22, 24).join(' '),
+      `Heading: ${heading.toFixed(1)}° (${headingCenti} centidegrees, big-endian)`
+    )
+  );
+  fields.push(createField('Satellites', 24, 24, bytes[24], `GPS satellites: ${satellites}`));
+  fields.push(
+    createField('Battery', 25, 26, bytes.slice(25, 27).join(' '), `Battery: ${battery}mV (big-endian)`)
+  );
+  fields.push(
+    createField(
+      'Timestamp',
+      27,
+      30,
+      bytes.slice(27, 31).join(' '),
+      `Sent: ${formatUnixTimestamp(timestamp)} (big-endian)`
+    )
+  );
+  fields.push(createField('Name Length', 31, 31, bytes[31], `Name field length: ${nameLen} bytes`));
+
+  if (nameLen > 0 && bytes.length >= 32 + nameLen) {
+    const nameBytes = bytes.slice(32, 32 + nameLen);
+    const name = nameBytes.map((b) => String.fromCharCode(parseInt(b, 16))).join('');
+    fields.push(
+      createField('Name', 32, 31 + nameLen, nameBytes.join(' '), `Tracker name: ${name}`)
+    );
+  }
+
+  return fields;
+}
+
 export function decodePacketSummary(
   packet: RawPacket,
   decoderOptions?: DecryptionOptions
@@ -360,23 +507,26 @@ export function inspectRawPacketWithOptions(
   const payloadFields =
     structure == null
       ? []
-      : (structure.payload.segments.length > 0
-          ? structure.payload.segments
-          : structure.payload.hex.length > 0
-            ? [
-                {
-                  name: 'Payload Bytes',
-                  description:
-                    'Field-level payload breakdown is not available for this packet type.',
-                  startByte: 0,
-                  endByte: Math.max(0, structure.payload.hex.length / 2 - 1),
-                  value: structure.payload.hex,
-                },
-              ]
-            : []
-        ).map((segment, index) =>
-          createPacketField('payload', `payload-${index}`, segment, structure.payload.startByte)
-        );
+      : packet.payload_type === 'LOCATION' && structure.payload.hex.length >= 64
+        ? // Generate custom fields for LOCATION tracker packets
+          generateLocationPayloadFields(structure.payload.hex, structure.payload.startByte)
+        : (structure.payload.segments.length > 0
+              ? structure.payload.segments
+              : structure.payload.hex.length > 0
+                ? [
+                    {
+                      name: 'Payload Bytes',
+                      description:
+                        'Field-level payload breakdown is not available for this packet type.',
+                      startByte: 0,
+                      endByte: Math.max(0, structure.payload.hex.length / 2 - 1),
+                      value: structure.payload.hex,
+                    },
+                  ]
+                : []
+          ).map((segment, index) =>
+            createPacketField('payload', `payload-${index}`, segment, structure.payload.startByte)
+          );
 
   const enrichedPayloadFields = payloadFields.map((field) => {
     if (!decoded?.isValid || field.name !== 'Ciphertext') {

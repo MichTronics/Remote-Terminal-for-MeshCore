@@ -11,7 +11,7 @@ async def check_node_match(node_id: str):
     from app.repository.contacts import ContactRepository
     
     # Ensure database is connected
-    if not db._pool:
+    if db._connection is None:
         await db.connect()
     
     contacts = await ContactRepository.get_all()

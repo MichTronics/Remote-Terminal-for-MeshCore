@@ -288,6 +288,15 @@ function getPacketContext(
     };
   }
 
+  // LOCATION tracker packets - show tracker name and type
+  if (packet.payload_type === 'LOCATION' && fallbackSender) {
+    return {
+      title: 'Tracker',
+      primary: fallbackSender,
+      secondary: 'GPS Location Tracker',
+    };
+  }
+
   if (fallbackSender) {
     return {
       title: 'Context',

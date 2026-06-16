@@ -426,6 +426,20 @@ export function inspectRawPacketWithOptions(
       return { ...withStructure, decryptedMessage: detailLines.join('\n') };
     }
 
+    // LOCATION tracker packets (0x0D): server-side parsing via decrypted_info
+    // Backend decodes LOCATION payload and provides formatted message
+    if (packet.payload_type === 'LOCATION' && packet.decrypted_info?.message) {
+      const info = packet.decrypted_info;
+      const detailLines = [
+        info.sender_timestamp != null
+          ? `Sent (packet): ${formatUnixTimestamp(info.sender_timestamp)}`
+          : null,
+        info.sender ? `Tracker: ${info.sender}` : null,
+        `Location: ${info.message}`,
+      ].filter((line): line is string => line !== null);
+      return { ...withStructure, decryptedMessage: detailLines.join('\n') };
+    }
+
     return withStructure;
   });
 

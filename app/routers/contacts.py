@@ -701,18 +701,8 @@ async def get_contact_telemetry_history(public_key: str) -> list[TelemetryHistor
     return [TelemetryHistoryEntry(**row) for row in rows]
 
 
-@router.get("/{public_key}/location-history", response_model=list[LocationHistory])
-async def get_contact_location_history(
-    public_key: str, hours: int = Query(default=12, ge=1, le=168)
-) -> list[LocationHistory]:
-    """Get location history trail for a tracker contact."""
-    from app.repository.location_history import LocationHistoryRepository
-
-    contact = await _resolve_contact_or_404(public_key)
-    since = int(time.time()) - (hours * 3600)
-    return await LocationHistoryRepository.get_history(contact.public_key, since)
-
-
+# IMPORTANT: This more specific route must come BEFORE /{public_key}/location-history
+# to prevent FastAPI from matching "trackers" as a public_key parameter
 @router.get("/trackers/location-history")
 async def get_all_tracker_location_history():
     """Get location history trails for all tracker contacts within the retention window."""
@@ -738,3 +728,15 @@ async def get_all_tracker_location_history():
             )
 
     return result
+
+
+@router.get("/{public_key}/location-history", response_model=list[LocationHistory])
+async def get_contact_location_history(
+    public_key: str, hours: int = Query(default=12, ge=1, le=168)
+) -> list[LocationHistory]:
+    """Get location history trail for a tracker contact."""
+    from app.repository.location_history import LocationHistoryRepository
+
+    contact = await _resolve_contact_or_404(public_key)
+    since = int(time.time()) - (hours * 3600)
+    return await LocationHistoryRepository.get_history(contact.public_key, since)

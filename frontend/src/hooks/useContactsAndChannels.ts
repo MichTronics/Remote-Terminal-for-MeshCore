@@ -4,7 +4,13 @@ import { takePrefetchOrFetch } from '../prefetch';
 import { toast } from '../components/ui/sonner';
 import { getContactDisplayName } from '../utils/pubkey';
 import { findPublicChannel, PUBLIC_CHANNEL_KEY, PUBLIC_CHANNEL_NAME } from '../utils/publicChannel';
-import type { BulkCreateHashtagChannelsResult, Channel, Contact, Conversation } from '../types';
+import type {
+  BulkCreateHashtagChannelsResult,
+  BulkHashtagChannelInput,
+  Channel,
+  Contact,
+  Conversation,
+} from '../types';
 
 interface UseContactsAndChannelsArgs {
   setActiveConversation: (conv: Conversation | null) => void;
@@ -114,7 +120,7 @@ export function useContactsAndChannels({
 
   const handleBulkCreateHashtagChannels = useCallback(
     async (
-      channelNames: string[],
+      channelNames: BulkHashtagChannelInput[] | string[],
       tryHistorical: boolean
     ): Promise<BulkCreateHashtagChannelsResult> => {
       const result = await api.bulkCreateHashtagChannels(channelNames, tryHistorical);

@@ -10,6 +10,7 @@ from app.models import (
     ResendChannelMessageResponse,
     SendChannelMessageRequest,
     SendDirectMessageRequest,
+    SpamRouteStatsResponse,
 )
 from app.repository import AmbiguousPublicKeyPrefixError, AppSettingsRepository, MessageRepository
 from app.services.message_send import (
@@ -22,6 +23,25 @@ from app.websocket import broadcast_error, broadcast_event
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/messages", tags=["messages"])
+
+
+@router.get("/spam/routes", response_model=SpamRouteStatsResponse)
+async def get_spam_route_stats(
+    window_hours: int | None = Query(
+        default=24,
+        ge=1,
+        le=24 * 30,
+        description="Lookback window in hours. Omit for default 24h.",
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    repeater_limit: int = Query(default=50, ge=1, le=200),
+) -> SpamRouteStatsResponse:
+    """Rank repeaters/hops and routes seen in direct-message path observations."""
+    return await MessageRepository.get_spam_route_stats(
+        window_hours=window_hours,
+        limit=limit,
+        repeater_limit=repeater_limit,
+    )
 
 
 @router.get("/around/{message_id}", response_model=MessagesAroundResponse)

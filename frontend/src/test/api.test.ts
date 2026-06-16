@@ -121,6 +121,26 @@ describe('fetchJson (via api methods)', () => {
       const [url] = mockFetch.mock.calls[0];
       expect(url).toBe('./api/contacts/repeaters/advert-paths?limit_per_repeater=12');
     });
+
+    it('builds spam route stats endpoint query', async () => {
+      installMockFetch();
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            window_hours: 24,
+            total_observations: 0,
+            total_messages: 0,
+            repeaters: [],
+            routes: [],
+          }),
+      });
+
+      await api.getSpamRouteStats({ windowHours: 24, limit: 25, repeaterLimit: 10 });
+
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).toBe('./api/messages/spam/routes?window_hours=24&limit=25&repeater_limit=10');
+    });
   });
 
   describe('error handling', () => {

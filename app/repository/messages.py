@@ -5,11 +5,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.database import db
+from app.decoder import PayloadType, parse_packet
 from app.models import (
     ContactAnalyticsHourlyBucket,
     ContactAnalyticsWeeklyBucket,
     Message,
     MessagePath,
+    SpamRepeaterStat,
+    SpamRouteStat,
+    SpamRouteStatsResponse,
 )
 
 
@@ -47,6 +51,265 @@ class MessageRepository:
             return [MessagePath(**p) for p in paths_data]
         except (json.JSONDecodeError, TypeError, KeyError, ValueError):
             return None
+
+    @staticmethod
+    def _format_path_tokens(path: str, path_len: int) -> list[str]:
+        clean_path = (path or "").upper()
+        if not clean_path or path_len <= 0:
+            return []
+
+        width = len(clean_path) // path_len
+        if width <= 0 or width % 2 != 0 or width not in {2, 4, 6}:
+            width = 2
+        return [clean_path[idx : idx + width] for idx in range(0, len(clean_path), width)]
+
+    @staticmethod
+    def _avg(values: list[float]) -> float | None:
+        return sum(values) / len(values) if values else None
+
+    @staticmethod
+    async def get_spam_route_stats(
+        *,
+        window_hours: int | None = 24,
+        limit: int = 50,
+        repeater_limit: int = 50,
+        now: int | None = None,
+    ) -> SpamRouteStatsResponse:
+        """Aggregate the most-used observed routes for direct-message traffic."""
+        since = None
+        if window_hours is not None:
+            since = (now if now is not None else int(time.time())) - window_hours * 3600
+
+        message_where_parts = ["messages.type = 'PRIV'", "messages.paths IS NOT NULL"]
+        message_params: list[Any] = []
+        if since is not None:
+            message_where_parts.append("messages.received_at >= ?")
+            message_params.append(since)
+        message_where_sql = " AND ".join(message_where_parts)
+
+        raw_where_parts = ["message_id IS NULL"]
+        raw_params: list[Any] = []
+        if since is not None:
+            raw_where_parts.append("timestamp >= ?")
+            raw_params.append(since)
+        raw_where_sql = " AND ".join(raw_where_parts)
+
+        async with db.readonly() as conn:
+            async with conn.execute(
+                f"""
+                SELECT
+                    messages.id AS message_id,
+                    messages.conversation_key AS conversation_key,
+                    UPPER(COALESCE(json_extract(path_entry.value, '$.path'), '')) AS path,
+                    COALESCE(
+                        json_extract(path_entry.value, '$.path_len'),
+                        CASE
+                            WHEN COALESCE(json_extract(path_entry.value, '$.path'), '') = ''
+                            THEN 0
+                            ELSE length(json_extract(path_entry.value, '$.path')) / 2
+                        END
+                    ) AS path_len,
+                    COALESCE(
+                        json_extract(path_entry.value, '$.received_at'),
+                        messages.received_at
+                    ) AS observed_at,
+                    json_extract(path_entry.value, '$.rssi') AS rssi,
+                    json_extract(path_entry.value, '$.snr') AS snr
+                FROM messages, json_each(COALESCE(messages.paths, '[]')) AS path_entry
+                WHERE {message_where_sql}
+                """,
+                message_params,
+            ) as cursor:
+                message_path_rows = await cursor.fetchall()
+
+            async with conn.execute(
+                f"""
+                SELECT id, data, timestamp
+                FROM raw_packets
+                WHERE {raw_where_sql}
+                ORDER BY timestamp DESC
+                """,
+                raw_params,
+            ) as cursor:
+                raw_packet_rows = await cursor.fetchall()
+
+        route_buckets: dict[tuple[str, int], dict[str, Any]] = {}
+        repeater_buckets: dict[str, dict[str, Any]] = {}
+        total_messages: set[str] = set()
+        observations: list[dict[str, Any]] = []
+
+        for row in message_path_rows:
+            observations.append(
+                {
+                    "message_id": f"msg:{row['message_id']}",
+                    "conversation_key": row["conversation_key"],
+                    "path": row["path"] or "",
+                    "path_len": int(row["path_len"] or 0),
+                    "observed_at": row["observed_at"],
+                    "rssi": row["rssi"],
+                    "snr": row["snr"],
+                }
+            )
+
+        for row in raw_packet_rows:
+            packet_info = parse_packet(bytes(row["data"]))
+            if packet_info is None or packet_info.payload_type not in {
+                PayloadType.TEXT_MESSAGE,
+                PayloadType.RESPONSE,
+            }:
+                continue
+            observations.append(
+                {
+                    "message_id": f"raw:{row['id']}",
+                    "conversation_key": f"raw:{row['id']}",
+                    "path": packet_info.path.hex().upper() if packet_info.path else "",
+                    "path_len": packet_info.path_length,
+                    "observed_at": row["timestamp"],
+                    "rssi": None,
+                    "snr": None,
+                }
+            )
+
+        for observation in observations:
+            message_id = observation["message_id"]
+            conversation_key = observation["conversation_key"]
+            path = observation["path"] or ""
+            path_len = int(observation["path_len"] or 0)
+            observed_at = observation["observed_at"]
+            rssi = observation["rssi"]
+            snr = observation["snr"]
+            total_messages.add(message_id)
+
+            route_key = (path, path_len)
+            route = route_buckets.setdefault(
+                route_key,
+                {
+                    "path": path,
+                    "path_len": path_len,
+                    "observation_count": 0,
+                    "message_ids": set(),
+                    "conversation_keys": set(),
+                    "first_seen": None,
+                    "last_seen": None,
+                    "rssi_values": [],
+                    "snr_values": [],
+                },
+            )
+            route["observation_count"] += 1
+            route["message_ids"].add(message_id)
+            route["conversation_keys"].add(conversation_key)
+            route["first_seen"] = (
+                observed_at
+                if route["first_seen"] is None
+                else min(route["first_seen"], observed_at)
+            )
+            route["last_seen"] = (
+                observed_at if route["last_seen"] is None else max(route["last_seen"], observed_at)
+            )
+            if rssi is not None:
+                route["rssi_values"].append(float(rssi))
+            if snr is not None:
+                route["snr_values"].append(float(snr))
+
+            hop_tokens = MessageRepository._format_path_tokens(path, path_len)
+            for index, hop in enumerate(hop_tokens):
+                repeater = repeater_buckets.setdefault(
+                    hop,
+                    {
+                        "hop": hop,
+                        "observation_count": 0,
+                        "route_keys": set(),
+                        "message_ids": set(),
+                        "conversation_keys": set(),
+                        "source_side_count": 0,
+                        "radio_side_count": 0,
+                        "middle_count": 0,
+                        "first_seen": None,
+                        "last_seen": None,
+                        "rssi_values": [],
+                        "snr_values": [],
+                    },
+                )
+                repeater["observation_count"] += 1
+                repeater["route_keys"].add(route_key)
+                repeater["message_ids"].add(message_id)
+                repeater["conversation_keys"].add(conversation_key)
+                if index == 0:
+                    repeater["source_side_count"] += 1
+                elif index == len(hop_tokens) - 1:
+                    repeater["radio_side_count"] += 1
+                else:
+                    repeater["middle_count"] += 1
+                repeater["first_seen"] = (
+                    observed_at
+                    if repeater["first_seen"] is None
+                    else min(repeater["first_seen"], observed_at)
+                )
+                repeater["last_seen"] = (
+                    observed_at
+                    if repeater["last_seen"] is None
+                    else max(repeater["last_seen"], observed_at)
+                )
+                if rssi is not None:
+                    repeater["rssi_values"].append(float(rssi))
+                if snr is not None:
+                    repeater["snr_values"].append(float(snr))
+
+        def route_stat(bucket: dict[str, Any]) -> SpamRouteStat:
+            path = bucket["path"]
+            path_len = bucket["path_len"]
+            hop_tokens = MessageRepository._format_path_tokens(path, path_len)
+            avg_rssi = MessageRepository._avg(bucket["rssi_values"])
+            avg_snr = MessageRepository._avg(bucket["snr_values"])
+            return SpamRouteStat(
+                path=path,
+                path_len=path_len,
+                hop_count=path_len,
+                hop_tokens=hop_tokens,
+                route="Direct" if path_len <= 0 or not hop_tokens else " -> ".join(hop_tokens),
+                observation_count=bucket["observation_count"],
+                message_count=len(bucket["message_ids"]),
+                conversation_count=len(bucket["conversation_keys"]),
+                first_seen=bucket["first_seen"],
+                last_seen=bucket["last_seen"],
+                avg_rssi=round(avg_rssi, 1) if avg_rssi is not None else None,
+                avg_snr=round(avg_snr, 2) if avg_snr is not None else None,
+            )
+
+        def repeater_stat(bucket: dict[str, Any]) -> SpamRepeaterStat:
+            avg_rssi = MessageRepository._avg(bucket["rssi_values"])
+            avg_snr = MessageRepository._avg(bucket["snr_values"])
+            return SpamRepeaterStat(
+                hop=bucket["hop"],
+                observation_count=bucket["observation_count"],
+                route_count=len(bucket["route_keys"]),
+                message_count=len(bucket["message_ids"]),
+                conversation_count=len(bucket["conversation_keys"]),
+                source_side_count=bucket["source_side_count"],
+                radio_side_count=bucket["radio_side_count"],
+                middle_count=bucket["middle_count"],
+                first_seen=bucket["first_seen"],
+                last_seen=bucket["last_seen"],
+                avg_rssi=round(avg_rssi, 1) if avg_rssi is not None else None,
+                avg_snr=round(avg_snr, 2) if avg_snr is not None else None,
+            )
+
+        routes = sorted(
+            (route_stat(bucket) for bucket in route_buckets.values()),
+            key=lambda item: (-item.observation_count, -(item.last_seen or 0), item.path),
+        )[:limit]
+        repeaters = sorted(
+            (repeater_stat(bucket) for bucket in repeater_buckets.values()),
+            key=lambda item: (-item.observation_count, -item.source_side_count, item.hop),
+        )[:repeater_limit]
+
+        return SpamRouteStatsResponse(
+            window_hours=window_hours,
+            total_observations=len(observations),
+            total_messages=len(total_messages),
+            repeaters=repeaters,
+            routes=routes,
+        )
 
     @staticmethod
     async def create(

@@ -5,6 +5,7 @@ import { MessageInput, type MessageInputHandle } from './MessageInput';
 import { MessageList } from './MessageList';
 import { RawPacketFeedView } from './RawPacketFeedView';
 import { RoomServerPanel } from './RoomServerPanel';
+import { SpamRoutesView } from './SpamRoutesView';
 import { TracePane } from './TracePane';
 import type {
   Channel,
@@ -268,6 +269,10 @@ export function ConversationPane({
 
   if (activeConversation.type === 'trace') {
     return <TracePane contacts={contacts} config={config} onRunTracePath={onRunTracePath} />;
+  }
+
+  if (activeConversation.type === 'spam') {
+    return <SpamRoutesView />;
   }
 
   if (activeContactIsRepeater) {

@@ -506,6 +506,54 @@ class MessagesAroundResponse(BaseModel):
     has_newer: bool
 
 
+class SpamRouteStat(BaseModel):
+    """Aggregated route usage for direct-message traffic."""
+
+    path: str = Field(description="Hex-encoded path bytes; empty string means direct")
+    path_len: int = Field(description="Hop count for this observed route")
+    hop_count: int = Field(description="Alias for path_len for frontend display")
+    hop_tokens: list[str] = Field(description="Path split into hop identifiers")
+    route: str = Field(description="Human-readable route label")
+    observation_count: int = Field(description="Number of path observations")
+    message_count: int = Field(description="Number of distinct messages seen on this route")
+    conversation_count: int = Field(description="Number of DM conversations using this route")
+    first_seen: int | None = Field(description="First route observation timestamp")
+    last_seen: int | None = Field(description="Most recent route observation timestamp")
+    avg_rssi: float | None = Field(default=None, description="Average RSSI in dBm")
+    avg_snr: float | None = Field(default=None, description="Average SNR in dB")
+
+
+class SpamRepeaterStat(BaseModel):
+    """Aggregated hop/repeater identifier usage for direct-message traffic."""
+
+    hop: str = Field(description="Observed hop/repeater identifier")
+    observation_count: int = Field(description="Number of DM path observations containing this hop")
+    route_count: int = Field(description="Number of distinct routes containing this hop")
+    message_count: int = Field(description="Number of distinct messages containing this hop")
+    conversation_count: int = Field(description="Number of DM conversations containing this hop")
+    source_side_count: int = Field(
+        description="Times this hop was first in the stored path; often closest to the sender"
+    )
+    radio_side_count: int = Field(
+        description="Times this hop was last in the stored path; often closest to this radio"
+    )
+    middle_count: int = Field(description="Times this hop appeared between the path ends")
+    first_seen: int | None = Field(description="First route observation timestamp")
+    last_seen: int | None = Field(description="Most recent route observation timestamp")
+    avg_rssi: float | None = Field(default=None, description="Average RSSI in dBm")
+    avg_snr: float | None = Field(default=None, description="Average SNR in dB")
+
+
+class SpamRouteStatsResponse(BaseModel):
+    """Route usage summary for direct-message traffic."""
+
+    window_hours: int | None = Field(description="Lookback window in hours; null means all time")
+    total_observations: int
+    total_messages: int
+    repeaters: list[SpamRepeaterStat]
+    routes: list[SpamRouteStat]
+
+
 class ResendChannelMessageResponse(BaseModel):
     status: str
     message_id: int
@@ -521,6 +569,12 @@ class RawPacketDecryptedInfo(BaseModel):
     contact_key: str | None = None
     sender_timestamp: int | None = None
     message: str | None = None
+    speed: float | None = Field(
+        default=None, description="Tracker speed in m/s for LOCATION packets"
+    )
+    heading: float | None = Field(
+        default=None, description="Tracker heading in degrees for LOCATION packets"
+    )
 
 
 class RawPacketBroadcast(BaseModel):
@@ -566,7 +620,8 @@ class RawPacketDetail(BaseModel):
         default=None, description="Hex-encoded 4-byte transport/region codes for TRANSPORT routes"
     )
     region_name: str | None = Field(
-        default=None, description="Identified region name (e.g., 'us', 'nl') if matched against known regions"
+        default=None,
+        description="Identified region name (e.g., 'us', 'nl') if matched against known regions",
     )
     decrypted: bool = False
     decrypted_info: RawPacketDecryptedInfo | None = None

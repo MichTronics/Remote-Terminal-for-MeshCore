@@ -102,6 +102,31 @@ class TestCreateChannel:
         assert data["decrypt_started"] is False
 
     @pytest.mark.asyncio
+    async def test_bulk_hashtag_create_accepts_explicit_channel_keys(self, test_db, client):
+        response = await client.post(
+            "/api/channels/bulk-hashtag",
+            json={
+                "channels": [
+                    {
+                        "name": "#meshcore",
+                        "key": "2fa78a5aef618e7c2a78f0ab5c8869b3",
+                    }
+                ],
+                "try_historical": False,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["created_channels"][0]["name"] == "#meshcore"
+        assert data["created_channels"][0]["key"] == "2FA78A5AEF618E7C2A78F0AB5C8869B3"
+
+        stored = await ChannelRepository.get_by_key("2FA78A5AEF618E7C2A78F0AB5C8869B3")
+        assert stored is not None
+        assert stored.name == "#meshcore"
+        assert stored.is_hashtag is True
+
+    @pytest.mark.asyncio
     async def test_bulk_hashtag_create_can_start_one_decrypt_job(self, test_db, client):
         with (
             patch(

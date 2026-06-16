@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Dice5 } from 'lucide-react';
+import { Dice5, Globe2 } from 'lucide-react';
+import type { BulkHashtagChannelInput } from '../types';
+import { MESHWIKI_PUBLIC_CHANNELS } from '../utils/meshwikiPublicChannels';
 import {
   Dialog,
   DialogContent,
@@ -40,7 +42,10 @@ interface NewMessageModalProps {
   ) => Promise<void>;
   onCreateChannel: (name: string, key: string, tryHistorical: boolean) => Promise<void>;
   onCreateHashtagChannel: (name: string, tryHistorical: boolean) => Promise<void>;
-  onBulkAddHashtagChannels: (channelNames: string[], tryHistorical: boolean) => Promise<void>;
+  onBulkAddHashtagChannels: (
+    channelNames: BulkHashtagChannelInput[] | string[],
+    tryHistorical: boolean
+  ) => Promise<void>;
 }
 
 function validateHashtagName(channelName: string): string | null {
@@ -237,6 +242,23 @@ export function NewMessageModal({
     }
   };
 
+  const handleAddMeshWikiPublicChannels = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      await onBulkAddHashtagChannels(MESHWIKI_PUBLIC_CHANNELS, tryHistorical);
+      resetForm();
+      onClose();
+    } catch (err) {
+      toast.error('Failed to create conversation', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+      setError(err instanceof Error ? err.message : 'Failed to create');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const showHistoricalOption = undecryptedCount > 0;
 
   return (
@@ -389,6 +411,18 @@ export function NewMessageModal({
 
           {showBulkAddChannelTab && (
             <TabsContent value="bulk-hashtag" className="mt-4 space-y-4">
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full justify-center gap-2"
+                onClick={handleAddMeshWikiPublicChannels}
+                disabled={loading}
+              >
+                <Globe2 className="h-4 w-4" aria-hidden="true" />
+                {loading
+                  ? 'Adding...'
+                  : `Add MeshWiki Public List (${MESHWIKI_PUBLIC_CHANNELS.length})`}
+              </Button>
               <div className="space-y-2">
                 <Label htmlFor="bulk-hashtag-names">Bulk Add Channel</Label>
                 <textarea

@@ -253,6 +253,11 @@ async def update_settings(update: AppSettingsUpdate) -> AppSettings:
         logger.info("Updating telemetry_routed_hourly to %s", update.telemetry_routed_hourly)
         kwargs["telemetry_routed_hourly"] = update.telemetry_routed_hourly
 
+    # Tracker history retention
+    if update.tracker_history_hours is not None:
+        logger.info("Updating tracker_history_hours to %d", update.tracker_history_hours)
+        kwargs["tracker_history_hours"] = update.tracker_history_hours
+
     # Flood scope
     flood_scope_changed = False
     if update.flood_scope is not None:

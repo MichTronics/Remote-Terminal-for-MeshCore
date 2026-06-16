@@ -968,6 +968,12 @@ class AppSettings(BaseModel):
             "are automatically byte-perfect resent once (within the 30-second dedup window)"
         ),
     )
+    tracker_history_hours: int = Field(
+        default=12,
+        ge=1,
+        le=168,
+        description="Tracker location history retention window in hours (1-168, default 12)",
+    )
 
 
 class BusyChannel(BaseModel):

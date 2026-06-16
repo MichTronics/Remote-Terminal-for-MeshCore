@@ -707,10 +707,10 @@ async def get_contact_telemetry_history(public_key: str) -> list[TelemetryHistor
 async def get_all_tracker_location_history():
     """Get location history trails for all tracker contacts within the retention window."""
     from app.repository.location_history import LocationHistoryRepository
-    from app.repository.settings import SettingsRepository
+    from app.repository.settings import AppSettingsRepository
 
-    settings = await SettingsRepository.get()
-    retention_hours = settings.get("tracker_history_hours", 12)
+    settings = await AppSettingsRepository.get()
+    retention_hours = settings.tracker_history_hours
 
     # Get all location history within the retention window
     history_by_key = await LocationHistoryRepository.get_all_recent(retention_hours)

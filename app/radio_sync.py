@@ -2196,14 +2196,14 @@ async def stop_telemetry_collect() -> None:
 async def _location_history_cleanup_loop():
     """Background task that periodically prunes old location history entries."""
     from app.repository.location_history import LocationHistoryRepository
-    from app.repository.settings import SettingsRepository
+    from app.repository.settings import AppSettingsRepository
 
     logger.info("Location history cleanup task started")
     while True:
         try:
             await asyncio.sleep(LOCATION_HISTORY_CLEANUP_INTERVAL)
-            settings = await SettingsRepository.get()
-            retention_hours = settings.get("tracker_history_hours", 12)
+            settings = await AppSettingsRepository.get()
+            retention_hours = settings.tracker_history_hours
             deleted = await LocationHistoryRepository.prune_old_entries(retention_hours)
             if deleted > 0:
                 logger.debug("Pruned %d old location history entries", deleted)

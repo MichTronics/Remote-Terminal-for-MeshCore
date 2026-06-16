@@ -1021,7 +1021,7 @@ export function MapView({
                 positions={history.map((h) => [h.lat, h.lon] as [number, number])}
                 pathOptions={{
                   color: '#ef4444',
-                  weight: 2,
+                  weight: 4,
                   opacity: 0.7,
                   lineCap: 'round',
                   lineJoin: 'round',

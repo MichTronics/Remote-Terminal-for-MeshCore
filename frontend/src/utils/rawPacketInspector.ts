@@ -190,7 +190,10 @@ function generateLocationPayloadFields(
     return value;
   };
 
-  const magic = bytes.slice(0, 4).map((b) => String.fromCharCode(parseInt(b, 16))).join('');
+  const magic = bytes
+    .slice(0, 4)
+    .map((b) => String.fromCharCode(parseInt(b, 16)))
+    .join('');
   const version = parseInt(bytes[4], 16);
   const nodeId = bytes.slice(6, 10).join('');
   const latMicro = parseBE(10, 4, true);
@@ -229,7 +232,13 @@ function generateLocationPayloadFields(
   fields.push(createField('Version', 4, 4, bytes[4], `Protocol version: ${version}`));
   fields.push(createField('Flags', 5, 5, bytes[5], `Reserved flags: 0x${bytes[5]}`));
   fields.push(
-    createField('Node ID', 6, 9, bytes.slice(6, 10).join(' '), `First 4 bytes of public key: ${nodeId}`)
+    createField(
+      'Node ID',
+      6,
+      9,
+      bytes.slice(6, 10).join(' '),
+      `First 4 bytes of public key: ${nodeId}`
+    )
   );
   fields.push(
     createField(
@@ -250,7 +259,13 @@ function generateLocationPayloadFields(
     )
   );
   fields.push(
-    createField('Altitude', 18, 19, bytes.slice(18, 20).join(' '), `Altitude: ${altitude}m (big-endian)`)
+    createField(
+      'Altitude',
+      18,
+      19,
+      bytes.slice(18, 20).join(' '),
+      `Altitude: ${altitude}m (big-endian)`
+    )
   );
   fields.push(
     createField(
@@ -272,7 +287,13 @@ function generateLocationPayloadFields(
   );
   fields.push(createField('Satellites', 24, 24, bytes[24], `GPS satellites: ${satellites}`));
   fields.push(
-    createField('Battery', 25, 26, bytes.slice(25, 27).join(' '), `Battery: ${battery}mV (big-endian)`)
+    createField(
+      'Battery',
+      25,
+      26,
+      bytes.slice(25, 27).join(' '),
+      `Battery: ${battery}mV (big-endian)`
+    )
   );
   fields.push(
     createField(
@@ -510,19 +531,19 @@ export function inspectRawPacketWithOptions(
         ? // Generate custom fields for LOCATION tracker packets
           generateLocationPayloadFields(structure.payload.hex, structure.payload.startByte)
         : (structure.payload.segments.length > 0
-              ? structure.payload.segments
-              : structure.payload.hex.length > 0
-                ? [
-                    {
-                      name: 'Payload Bytes',
-                      description:
-                        'Field-level payload breakdown is not available for this packet type.',
-                      startByte: 0,
-                      endByte: Math.max(0, structure.payload.hex.length / 2 - 1),
-                      value: structure.payload.hex,
-                    },
-                  ]
-                : []
+            ? structure.payload.segments
+            : structure.payload.hex.length > 0
+              ? [
+                  {
+                    name: 'Payload Bytes',
+                    description:
+                      'Field-level payload breakdown is not available for this packet type.',
+                    startByte: 0,
+                    endByte: Math.max(0, structure.payload.hex.length / 2 - 1),
+                    value: structure.payload.hex,
+                  },
+                ]
+              : []
           ).map((segment, index) =>
             createPacketField('payload', `payload-${index}`, segment, structure.payload.startByte)
           );
@@ -584,6 +605,8 @@ export function inspectRawPacketWithOptions(
           ? `Sent (packet): ${formatUnixTimestamp(info.sender_timestamp)}`
           : null,
         info.sender ? `Tracker: ${info.sender}` : null,
+        typeof info.speed === 'number' ? `Speed: ${info.speed.toFixed(1)} m/s` : null,
+        typeof info.heading === 'number' ? `Heading: ${info.heading.toFixed(1)} deg` : null,
         `Location: ${info.message}`,
       ].filter((line): line is string => line !== null);
       return { ...withStructure, decryptedMessage: detailLines.join('\n') };

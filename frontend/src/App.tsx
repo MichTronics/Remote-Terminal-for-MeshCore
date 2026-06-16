@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useState, useMemo, type MouseEvent } from 'react';
+import { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { api } from './api';
 import { takePrefetchOrFetch } from './prefetch';
 import { useWebSocket } from './useWebSocket';
@@ -27,6 +27,7 @@ import { messageContainsMention } from './utils/messageParser';
 import { getStateKey } from './utils/conversationState';
 import type {
   BulkCreateHashtagChannelsResult,
+  BulkHashtagChannelInput,
   Channel,
   Conversation,
   Message,
@@ -179,9 +180,12 @@ export function App() {
 
   // Load regions for client-side packet identification
   useEffect(() => {
-    api.getRegions().then(setRegions).catch((err) => {
-      console.error('Failed to load regions:', err);
-    });
+    api
+      .getRegions()
+      .then(setRegions)
+      .catch((err) => {
+        console.error('Failed to load regions:', err);
+      });
   }, []);
 
   // Keep block lists in refs for WS callback filtering
@@ -525,14 +529,11 @@ export function App() {
     [handleSelectConversationWithTargetReset]
   );
 
-  const handleOpenNewMessage = useCallback(
-    (event?: MouseEvent<HTMLButtonElement>) => {
-      setNewMessagePrefillRequest(null);
-      setShowBulkAddChannelTab(event?.altKey === true);
-      openNewMessageModal();
-    },
-    [openNewMessageModal]
-  );
+  const handleOpenNewMessage = useCallback(() => {
+    setNewMessagePrefillRequest(null);
+    setShowBulkAddChannelTab(true);
+    openNewMessageModal();
+  }, [openNewMessageModal]);
 
   const handleCloseNewMessage = useCallback(() => {
     setNewMessagePrefillRequest(null);
@@ -564,7 +565,7 @@ export function App() {
   );
 
   const handleBulkAddChannels = useCallback(
-    async (channelNames: string[], tryHistorical: boolean) => {
+    async (channelNames: BulkHashtagChannelInput[] | string[], tryHistorical: boolean) => {
       const result = await handleBulkCreateHashtagChannels(channelNames, tryHistorical);
       setBulkAddResult(result);
     },

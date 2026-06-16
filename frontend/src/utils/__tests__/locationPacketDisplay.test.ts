@@ -29,6 +29,8 @@ describe('Location packet display support', () => {
         channel_key: null,
         contact_key: 'abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef567890',
         sender_timestamp: 1718582400,
+        speed: 1.5,
+        heading: 90,
         message:
           '📍 TrackerNode: 37.774900, -122.419400 (alt: 50m, speed: 1.5m/s, hdg: 90.0°, sats: 8, batt: 3700mV)',
       },
@@ -41,6 +43,8 @@ describe('Location packet display support', () => {
     expect(mockLocationPacket.decrypted_info?.message).toContain('📍');
     expect(mockLocationPacket.decrypted_info?.message).toContain('37.774900');
     expect(mockLocationPacket.decrypted_info?.message).toContain('-122.419400');
+    expect(mockLocationPacket.decrypted_info?.speed).toBe(1.5);
+    expect(mockLocationPacket.decrypted_info?.heading).toBe(90);
   });
 
   it('ATLAS packet type is recognized', () => {

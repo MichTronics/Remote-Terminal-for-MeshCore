@@ -166,8 +166,8 @@ const MAP_RECENCY_COLORS = {
   stale: '#f59e0b',
   old: '#64748b',
 } as const;
-const MAP_MARKER_STROKE = '#0f172a';
-const MAP_REPEATER_RING = '#f8fafc';
+const MAP_MARKER_STROKE = '#48b794';
+const MAP_REPEATER_RING = '#e3742a';
 
 // --- Packet visualization constants ---
 const THREE_DAYS_SEC = 3 * 24 * 60 * 60;
@@ -1021,7 +1021,7 @@ export function MapView({
                 positions={history.map((h) => [h.lat, h.lon] as [number, number])}
                 pathOptions={{
                   color: '#ef4444',
-                  weight: 3,
+                  weight: 1,
                   opacity: 0.7,
                   lineCap: 'round',
                   lineJoin: 'round',
@@ -1038,7 +1038,7 @@ export function MapView({
               contact.last_seen != null
                 ? formatTime(contact.last_seen)
                 : 'Never heard by this server';
-            const radius = isRepeater ? 7 : 5;
+            const radius = isRepeater ? 7 : 6;
 
             // Custom icon for trackers
             const trackerIcon = isTracker

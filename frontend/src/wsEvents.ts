@@ -25,6 +25,22 @@ export interface ToastPayload {
   details?: string;
 }
 
+export interface LocationPayload {
+  node_id: string;
+  name: string | null;
+  lat: number;
+  lon: number;
+  altitude: number;
+  speed: number;
+  heading: number;
+  satellites: number;
+  battery: number;
+  timestamp: number;
+  path_len: number;
+  path: string;
+  region_name: string | null;
+}
+
 export type KnownWsEvent =
   | { type: 'health'; data: HealthStatus }
   | { type: 'message'; data: Message }
@@ -35,6 +51,7 @@ export type KnownWsEvent =
   | { type: 'channel_deleted'; data: ChannelDeletedPayload }
   | { type: 'raw_packet'; data: RawPacket }
   | { type: 'message_acked'; data: MessageAckedPayload }
+  | { type: 'location'; data: LocationPayload }
   | { type: 'error'; data: ToastPayload }
   | { type: 'success'; data: ToastPayload }
   | { type: 'pong'; data?: null };
@@ -68,6 +85,7 @@ export function parseWsEvent(raw: string): ParsedWsEvent {
     case 'channel_deleted':
     case 'raw_packet':
     case 'message_acked':
+    case 'location':
     case 'error':
     case 'success':
       return {

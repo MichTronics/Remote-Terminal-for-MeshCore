@@ -192,7 +192,6 @@ function generateLocationPayloadFields(
 
   const magic = bytes.slice(0, 4).map((b) => String.fromCharCode(parseInt(b, 16))).join('');
   const version = parseInt(bytes[4], 16);
-  const flags = parseInt(bytes[5], 16);
   const nodeId = bytes.slice(6, 10).join('');
   const latMicro = parseBE(10, 4, true);
   const lonMicro = parseBE(14, 4, true);

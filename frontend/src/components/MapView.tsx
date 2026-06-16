@@ -1021,7 +1021,7 @@ export function MapView({
                 positions={history.map((h) => [h.lat, h.lon] as [number, number])}
                 pathOptions={{
                   color: '#ef4444',
-                  weight: 1,
+                  weight: 2,
                   opacity: 0.7,
                   lineCap: 'round',
                   lineJoin: 'round',
@@ -1109,7 +1109,7 @@ export function MapView({
                       color: isRepeater ? MAP_REPEATER_RING : MAP_MARKER_STROKE,
                       fillColor: color,
                       fillOpacity: 0.9,
-                      weight: isRepeater ? 3 : 2,
+                      weight: 2, // isRepeater ? 2 : 2,
                     }}
                   >
                     {markerContent}

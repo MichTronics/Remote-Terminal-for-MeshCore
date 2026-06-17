@@ -71,6 +71,31 @@ async def test_spam_live_tracker_narrows_shared_prefix_beyond_entry_hop():
 
 
 @pytest.mark.asyncio
+async def test_spam_live_tracker_falls_back_to_entry_hop_when_paths_are_dispersed():
+    tracker = _make_tracker(packet_threshold=15, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
+    base = 1_700_000_000.0
+    ingress_hops = ["AA", "BB", "CC", "DD", "EE"]
+
+    # Fifteen packets across five ingress hops, all with distinct suffix routes.
+    for offset in range(15):
+        hop = ingress_hops[offset % len(ingress_hops)]
+        suffix = format(offset, "02X")
+        await tracker.observe_and_maybe_alert(
+            path_hex=hop + "11" + suffix,
+            path_len=2,
+            observed_at=base + offset,
+        )
+
+    narrowed = tracker._cluster_packets_narrowed()
+    assert narrowed == []
+
+    clusters = tracker._cluster_packets()
+    assert len(clusters) == 3
+    assert all(cluster["cluster_mode"] == "entry_fallback" for cluster in clusters)
+    assert clusters[0]["packet_count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_spam_live_tracker_clusters_multiple_ingress_points(test_db):
     tracker = _make_tracker(packet_threshold=6, cluster_min_ratio=0.15)
 

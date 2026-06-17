@@ -313,6 +313,10 @@ export const api = {
       `/messages/spam/packet-timeline${query ? `?${query}` : ''}`
     );
   },
+  deleteSpamFloodEpisode: (episodeId: number) =>
+    fetchJson<{ status: string }>(`/messages/spam/episodes/${episodeId}`, {
+      method: 'DELETE',
+    }),
   sendDirectMessage: (destination: string, text: string) =>
     fetchJson<Message>('/messages/direct', {
       method: 'POST',

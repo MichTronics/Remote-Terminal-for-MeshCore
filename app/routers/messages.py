@@ -65,6 +65,20 @@ async def get_spam_flood_episodes(
     return SpamFloodEpisodesResponse(episodes=episodes)
 
 
+@router.delete("/spam/episodes/{episode_id}")
+async def delete_spam_flood_episode(episode_id: int) -> dict[str, str]:
+    """Delete a persisted flood episode report."""
+    deleted = await SpamFloodEpisodeRepository.delete(episode_id)
+    if deleted and spam_live_tracker._episode_db_id == episode_id:
+        spam_live_tracker._episode_db_id = None
+        spam_live_tracker._episode_total_packets = 0
+        spam_live_tracker._episode_peak_window = 0
+        spam_live_tracker._episode_baseline = None
+        spam_live_tracker._episode_started_at = None
+        spam_live_tracker._episode_last_clusters = []
+    return {"status": "ok"}
+
+
 @router.get("/spam/packet-timeline", response_model=SpamPacketTimelineResponse)
 async def get_spam_packet_timeline(
     window_hours: int = Query(default=24, ge=1, le=72),

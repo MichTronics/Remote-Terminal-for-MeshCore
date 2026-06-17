@@ -619,6 +619,10 @@ class SpamFloodCluster(BaseModel):
         default=None, description="Estimated spam-origin longitude from narrowed prefix geo chain"
     )
     last_seen: int = Field(description="Unix timestamp of the newest packet in this cluster")
+    cluster_mode: str | None = Field(
+        default=None,
+        description="narrowed, entry_fallback, or sticky when cluster confidence is degraded",
+    )
 
 
 class SpamLiveStatus(BaseModel):
@@ -654,6 +658,14 @@ class SpamLiveStatus(BaseModel):
     episode_id: int | None = Field(
         default=None,
         description="Database ID for the current or most recent persisted flood episode",
+    )
+    cluster_min_share: float = Field(
+        default=0.15,
+        description="Minimum traffic share required for a narrowed ingress cluster",
+    )
+    clusters_stale: bool = Field(
+        default=False,
+        description="True when displayed clusters are the last known snapshot, not a fresh match",
     )
     clusters: list[SpamFloodCluster] = Field(default_factory=list)
 

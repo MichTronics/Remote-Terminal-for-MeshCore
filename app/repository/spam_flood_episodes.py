@@ -210,6 +210,32 @@ class SpamFloodEpisodeRepository:
         )
 
     @staticmethod
+    async def close_open_episodes(*, ended_at: int | None = None) -> int:
+        """Mark any in-progress episodes as ended (for example after server restart)."""
+        ended = ended_at if ended_at is not None else int(time.time())
+        async with db.tx() as conn:
+            cursor = await conn.execute(
+                """
+                UPDATE spam_flood_episodes
+                SET
+                    ended_at = ?,
+                    duration_secs = CASE WHEN ? > started_at THEN ? - started_at ELSE 0 END
+                WHERE ended_at IS NULL
+                """,
+                (ended, ended, ended),
+            )
+            return int(cursor.rowcount)
+
+    @staticmethod
+    async def delete(episode_id: int) -> bool:
+        async with db.tx() as conn:
+            cursor = await conn.execute(
+                "DELETE FROM spam_flood_episodes WHERE id = ?",
+                (episode_id,),
+            )
+            return int(cursor.rowcount) > 0
+
+    @staticmethod
     async def list_recent(*, limit: int = 50) -> list[SpamFloodEpisode]:
         async with db.readonly() as conn:
             async with conn.execute(

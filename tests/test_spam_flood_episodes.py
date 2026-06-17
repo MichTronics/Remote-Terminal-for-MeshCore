@@ -101,6 +101,38 @@ async def test_spam_live_tracker_persists_flood_episode(test_db):
 
 
 @pytest.mark.asyncio
+async def test_spam_flood_episodes_delete_endpoint(client, test_db):
+    episode_id = await SpamFloodEpisodeRepository.create_started(
+        started_at=1_700_000_000,
+        baseline_packets_per_window=1.5,
+        packet_threshold=15,
+        window_secs=30,
+    )
+
+    response = await client.delete(f"/api/messages/spam/episodes/{episode_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert await SpamFloodEpisodeRepository.list_recent(limit=10) == []
+
+
+@pytest.mark.asyncio
+async def test_spam_flood_episodes_close_open_on_startup(test_db):
+    episode_id = await SpamFloodEpisodeRepository.create_started(
+        started_at=1_700_000_000,
+        baseline_packets_per_window=1.5,
+        packet_threshold=15,
+        window_secs=30,
+    )
+    closed = await SpamFloodEpisodeRepository.close_open_episodes(ended_at=1_700_000_120)
+    assert closed == 1
+    episodes = await SpamFloodEpisodeRepository.list_recent(limit=10)
+    assert len(episodes) == 1
+    assert episodes[0].id == episode_id
+    assert episodes[0].ended_at == 1_700_000_120
+    assert episodes[0].duration_secs == 120
+
+
+@pytest.mark.asyncio
 async def test_spam_flood_episodes_endpoint(client, test_db):
     await SpamFloodEpisodeRepository.create_started(
         started_at=1_700_000_000,

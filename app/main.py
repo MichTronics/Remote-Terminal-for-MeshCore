@@ -125,6 +125,12 @@ async def lifespan(app: FastAPI):
 
     await seed_default_regions()
 
+    from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
+
+    closed = await SpamFloodEpisodeRepository.close_open_episodes()
+    if closed:
+        logger.info("Closed %d in-progress spam flood episode(s) from prior run", closed)
+
     await start_radio_stats_sampling()
 
     # Start periodic location history cleanup task

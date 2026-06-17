@@ -193,8 +193,11 @@ class SpamLiveTracker:
             or current_time - self._last_broadcast_at >= self.broadcast_cooldown_secs
         )
 
-    def _cluster_packets(self) -> list[dict[str, Any]]:
-        min_cluster_size = max(1, int(self.packet_threshold * self.cluster_min_ratio))
+    def _min_cluster_size(self) -> int:
+        return max(1, int(self.packet_threshold * self.cluster_min_ratio))
+
+    def _cluster_packets_narrowed(self) -> list[dict[str, Any]]:
+        min_cluster_size = self._min_cluster_size()
         narrowed_clusters = split_path_clusters(
             list(self._history),
             min_cluster_size=min_cluster_size,
@@ -216,6 +219,7 @@ class SpamLiveTracker:
                     "concentration": narrowed.concentration,
                     "narrowing_depth": narrowed.narrowing_depth,
                     "last_seen": max(record.timestamp for record in records),
+                    "cluster_mode": "narrowed",
                 }
             )
 
@@ -228,6 +232,46 @@ class SpamLiveTracker:
             )
         )
         return results
+
+    def _fallback_entry_clusters(self) -> list[dict[str, Any]]:
+        """Best-effort ingress hops when traffic is high but too dispersed to narrow."""
+        if not self._history:
+            return []
+
+        min_cluster_size = self._min_cluster_size()
+        by_entry: dict[str, list[_PacketRecord]] = {}
+        for record in self._history:
+            by_entry.setdefault(record.entry_node, []).append(record)
+
+        total = len(self._history)
+        results: list[dict[str, Any]] = []
+        for entry_hop, records in sorted(by_entry.items(), key=lambda item: -len(item[1])):
+            if len(records) < min_cluster_size:
+                continue
+            path_counts = Counter(record.full_rf_path for record in records)
+            dominant_path, _ = path_counts.most_common(1)[0]
+            results.append(
+                {
+                    "entry_hop": entry_hop,
+                    "packet_count": len(records),
+                    "dominant_path_tokens": list(dominant_path),
+                    "refined_hop_tokens": [entry_hop],
+                    "traffic_share": len(records) / total if total else 0.0,
+                    "concentration": 1.0,
+                    "narrowing_depth": 1,
+                    "last_seen": max(record.timestamp for record in records),
+                    "cluster_mode": "entry_fallback",
+                }
+            )
+            if len(results) >= 3:
+                break
+        return results
+
+    def _cluster_packets(self) -> list[dict[str, Any]]:
+        narrowed = self._cluster_packets_narrowed()
+        if narrowed:
+            return narrowed
+        return self._fallback_entry_clusters()
 
     async def get_live_status(self) -> SpamLiveStatus:
         current_time = time.time()
@@ -276,6 +320,7 @@ class SpamLiveTracker:
                     origin_lat=origin.lat if origin is not None else None,
                     origin_lon=origin.lon if origin is not None else None,
                     last_seen=int(cluster["last_seen"]),
+                    cluster_mode=cluster.get("cluster_mode"),
                 )
             )
         return enriched_clusters
@@ -284,7 +329,15 @@ class SpamLiveTracker:
         self, current_time: float, clusters: list[dict[str, Any]]
     ) -> SpamLiveStatus:
         enriched_clusters = await self._enrich_clusters(clusters)
-        self._episode_last_clusters = enriched_clusters
+        clusters_stale = False
+        if not enriched_clusters and self._active and self._episode_last_clusters:
+            enriched_clusters = [
+                cluster.model_copy(update={"cluster_mode": cluster.cluster_mode or "sticky"})
+                for cluster in self._episode_last_clusters
+            ]
+            clusters_stale = True
+        elif enriched_clusters:
+            self._episode_last_clusters = enriched_clusters
         peak_window = self._trigger_window_count(current_time)
         if self._episode_db_id is not None:
             self._episode_peak_window = max(self._episode_peak_window, peak_window)
@@ -309,6 +362,8 @@ class SpamLiveTracker:
             ),
             anomaly_ratio=anomaly_ratio,
             episode_id=self._episode_db_id,
+            cluster_min_share=self.cluster_min_ratio,
+            clusters_stale=clusters_stale,
             clusters=enriched_clusters,
         )
 

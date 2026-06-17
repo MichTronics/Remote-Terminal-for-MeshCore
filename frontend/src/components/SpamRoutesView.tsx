@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, Crosshair, ExternalLink, MapPin, RadioTower, RefreshCw, Route } from 'lucide-react';
+import { AlertTriangle, Crosshair, ExternalLink, MapPin, RadioTower, RefreshCw, Route, Trash2 } from 'lucide-react';
 
 import { api } from '../api';
 import type {
@@ -220,7 +220,13 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
 
         <LiveFloodSection live={live} />
 
-        <FloodEpisodeLogSection episodes={episodes} loading={episodesLoading} />
+        <FloodEpisodeLogSection
+          episodes={episodes}
+          loading={episodesLoading}
+          onEpisodeDeleted={(episodeId) =>
+            setEpisodes((current) => current.filter((episode) => episode.id !== episodeId))
+          }
+        />
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Metric
@@ -471,13 +477,24 @@ function LiveFloodSection({ live }: { live: SpamLiveStatus | null }) {
 
       {live.clusters.length === 0 ? (
         <p className="text-xs text-destructive/90">
-          Flood volume exceeded threshold, but no ingress cluster met the minimum share yet.
+          Flood volume is high, but no ingress hop reached the minimum share yet (
+          {formatPercent(live.cluster_min_share ?? 0.15)} of episode paths must share a prefix).
+          This usually means the attack is spraying many different routes rather than one concentrated
+          ingress trunk.
         </p>
       ) : (
-        <div className="grid gap-2 lg:grid-cols-2">
-          {live.clusters.map((cluster, index) => (
-            <LiveHotspotCard key={`${cluster.entry_hop}-${index}`} cluster={cluster} index={index} />
-          ))}
+        <div className="space-y-2">
+          {live.clusters_stale && (
+            <p className="text-xs text-destructive/90">
+              Showing last known hotspot snapshot while current paths are too dispersed to match a
+              narrowed cluster.
+            </p>
+          )}
+          <div className="grid gap-2 lg:grid-cols-2">
+            {live.clusters.map((cluster, index) => (
+              <LiveHotspotCard key={`${cluster.entry_hop}-${index}`} cluster={cluster} index={index} />
+            ))}
+          </div>
         </div>
       )}
     </section>
@@ -497,6 +514,16 @@ function LiveHotspotCard({ cluster, index }: { cluster: SpamFloodCluster; index:
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-semibold">Attack Hotspot #{index + 1}</div>
         <div className="flex items-center gap-2">
+          {cluster.cluster_mode === 'entry_fallback' && (
+            <div className="rounded bg-amber-500/15 px-2 py-0.5 text-[0.625rem] font-medium text-amber-700 dark:text-amber-300">
+              Dispersed
+            </div>
+          )}
+          {cluster.cluster_mode === 'sticky' && (
+            <div className="rounded bg-muted px-2 py-0.5 text-[0.625rem] font-medium text-muted-foreground">
+              Last known
+            </div>
+          )}
           {cluster.confidence > 0 && (
             <div className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
               {cluster.confidence}% conf
@@ -579,19 +606,42 @@ function LiveHotspotCard({ cluster, index }: { cluster: SpamFloodCluster; index:
 function FloodEpisodeLogSection({
   episodes,
   loading,
+  onEpisodeDeleted,
 }: {
   episodes: SpamFloodEpisode[];
   loading: boolean;
+  onEpisodeDeleted: (episodeId: number) => void;
 }) {
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDelete = async (episodeId: number) => {
+    setDeletingId(episodeId);
+    setDeleteError(null);
+    try {
+      await api.deleteSpamFloodEpisode(episodeId);
+      onEpisodeDeleted(episodeId);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete flood report');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <section className="space-y-2">
       <div>
         <h3 className="text-sm font-semibold">Flood Alert History</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Persisted attack log with 14-day baseline context. Review episodes you may have missed while
-          offline.
+          Persisted attack log with 14-day baseline context. Stuck in-progress rows usually mean the
+          server restarted mid-attack — delete them or restart once more to auto-close leftovers.
         </p>
       </div>
+      {deleteError && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {deleteError}
+        </div>
+      )}
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full min-w-[960px] text-sm">
           <thead className="bg-muted/60 text-xs uppercase text-muted-foreground">
@@ -604,6 +654,7 @@ function FloodEpisodeLogSection({
               <th className="px-3 py-2 text-left">Hotspot</th>
               <th className="px-3 py-2 text-left">Route</th>
               <th className="px-3 py-2 text-left">Location</th>
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -658,19 +709,33 @@ function FloodEpisodeLogSection({
                       <span className="text-muted-foreground">-</span>
                     )}
                   </td>
+                  <td className="px-3 py-2 text-right">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                      onClick={() => void handleDelete(episode.id)}
+                      disabled={deletingId === episode.id}
+                      title="Delete flood report"
+                      aria-label={`Delete flood report ${episode.id}`}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </td>
                 </tr>
               );
             })}
             {!loading && episodes.length === 0 && (
               <tr>
-                <td className="px-3 py-6 text-center text-muted-foreground" colSpan={8}>
+                <td className="px-3 py-6 text-center text-muted-foreground" colSpan={9}>
                   No flood episodes recorded yet.
                 </td>
               </tr>
             )}
             {loading && (
               <tr>
-                <td className="px-3 py-6 text-center text-muted-foreground" colSpan={8}>
+                <td className="px-3 py-6 text-center text-muted-foreground" colSpan={9}>
                   Loading flood history...
                 </td>
               </tr>

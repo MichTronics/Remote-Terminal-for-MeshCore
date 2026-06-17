@@ -428,6 +428,7 @@ export interface SpamFloodCluster {
   origin_lat: number | null;
   origin_lon: number | null;
   last_seen: number;
+  cluster_mode: string | null;
 }
 
 export interface SpamLiveStatus {
@@ -441,6 +442,8 @@ export interface SpamLiveStatus {
   baseline_packets_per_window: number | null;
   anomaly_ratio: number | null;
   episode_id: number | null;
+  cluster_min_share: number;
+  clusters_stale: boolean;
   clusters: SpamFloodCluster[];
 }
 

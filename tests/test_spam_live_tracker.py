@@ -17,6 +17,7 @@ def _make_tracker(**overrides) -> SpamLiveTracker:
     tracker.packet_threshold = overrides.get("packet_threshold", 5)
     tracker.cluster_min_ratio = overrides.get("cluster_min_ratio", 0.15)
     tracker.broadcast_cooldown_secs = overrides.get("broadcast_cooldown_secs", 0)
+    tracker.hold_secs = overrides.get("hold_secs", 300)
     tracker._gateway_pubkeys = overrides.get("gateway_pubkeys", frozenset({GWNL_GATEWAY.lower()}))
     return tracker
 
@@ -114,3 +115,22 @@ async def test_spam_live_status_endpoint(client, test_db):
         assert payload["clusters"][0]["entry_hop"] == "EE"
     finally:
         spam_live_tracker_module.spam_live_tracker = original
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_holds_alarm_after_threshold_drops():
+    tracker = _make_tracker(packet_threshold=3, hold_secs=300, gateway_pubkeys=frozenset())
+    base = 1_700_000_000.0
+
+    for offset in range(3):
+        await tracker.observe_and_maybe_alert(
+            path_hex="AABB",
+            path_len=2,
+            observed_at=base + offset,
+        )
+
+    tracker._sync_active_state(base + 35)
+    assert tracker._active is True
+
+    tracker._sync_active_state(base + 302)
+    assert tracker._active is False

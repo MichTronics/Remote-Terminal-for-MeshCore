@@ -829,6 +829,15 @@ export function App() {
     setContacts,
     setContactsLoaded,
   ]);
+
+  useEffect(() => {
+    if (!spamLiveStatus?.active) return;
+    const intervalId = window.setInterval(() => {
+      api.getSpamLiveStatus().then(setSpamLiveStatus).catch(console.error);
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [spamLiveStatus?.active]);
+
   return (
     <DistanceUnitProvider distanceUnit={distanceUnit} setDistanceUnit={setDistanceUnit}>
       <AppShell

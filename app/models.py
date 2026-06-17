@@ -575,7 +575,9 @@ class SpamFloodCluster(BaseModel):
 class SpamLiveStatus(BaseModel):
     """Live rolling-window flood detection status."""
 
-    active: bool = Field(description="True when packet volume exceeds the live threshold")
+    active: bool = Field(
+        description="True while flood volume exceeds threshold or within the post-flood hold period"
+    )
     window_secs: int = Field(description="Rolling window size in seconds")
     packet_threshold: int = Field(description="Packet count that triggers an active flood alert")
     total_packets: int = Field(description="Current packet count inside the rolling window")

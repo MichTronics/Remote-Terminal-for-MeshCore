@@ -358,15 +358,15 @@ export function formatMapPacketSenderFromDecoded(
 
 function payloadTypeLabel(packet: RawPacket, decoded: DecodedPacket | null): string {
   if (decoded?.isValid) {
-    return (PACKET_TYPE_LABELS[getPacketLabel(decoded.payloadType)] ?? 'UNKNOWN').padEnd(9, ' ');
+    return PACKET_TYPE_LABELS[getPacketLabel(decoded.payloadType)] ?? 'UNKNOWN';
   }
   const backendType = packet.payload_type?.trim();
   if (backendType) {
     const normalized = backendType.toUpperCase();
-    if (normalized === 'PATH') return ('ACK').padEnd(9, ' ');
-    return normalized.padEnd(9, ' ');
+    if (normalized === 'PATH') return ('ACK');
+    return normalized;
   }
-  return 'UNKNOWN'.padEnd(9, ' ');
+  return 'UNKNOWN';
 }
 
 function payloadTypeColor(packet: RawPacket, decoded: DecodedPacket | null): string {
@@ -398,7 +398,7 @@ export function buildMapPacketFeedEntry(
   context: MapPacketFeedContext
 ): MapPacketFeedEntry {
   const decoded = decodePacket(packet, context.decoderOptions);
-  const typeLabel = payloadTypeLabel(packet, decoded);
+  const typeLabel = payloadTypeLabel(packet, decoded).padEnd(9, ' ');
   const typeColor = payloadTypeColor(packet, decoded);
   const hopsPrefix = formatMapPacketHops(decoded ? getDecodedPathTokens(decoded) : []);
   const senderLabel = decoded

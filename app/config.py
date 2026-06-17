@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     spam_live_packet_threshold: int = Field(default=22, ge=5, le=1000)
     spam_live_cluster_min_ratio: float = Field(default=0.15, ge=0.05, le=1.0)
     spam_live_broadcast_cooldown_secs: int = Field(default=10, ge=1, le=120)
+    spam_live_hold_secs: int = Field(
+        default=300,
+        ge=0,
+        le=3600,
+        description="Keep flood alarms active this many seconds after the last above-threshold observation.",
+    )
 
     @model_validator(mode="after")
     def validate_transport_exclusivity(self) -> "Settings":

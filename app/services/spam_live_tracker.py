@@ -65,11 +65,13 @@ class SpamLiveTracker:
     broadcast_cooldown_secs: float = field(
         default_factory=lambda: float(settings.spam_live_broadcast_cooldown_secs)
     )
+    hold_secs: float = field(default_factory=lambda: float(settings.spam_live_hold_secs))
 
     _history: deque[_PacketRecord] = field(default_factory=deque, init=False)
     _gateway_pubkeys: frozenset[str] = field(default_factory=_effective_gateway_pubkeys, init=False)
     _active: bool = field(default=False, init=False)
     _detected_at: float | None = field(default=None, init=False)
+    _hold_until: float | None = field(default=None, init=False)
     _last_broadcast_at: float = field(default=0.0, init=False)
     _last_status: SpamLiveStatus | None = field(default=None, init=False)
 
@@ -117,28 +119,45 @@ class SpamLiveTracker:
                 full_rf_path=tuple(rf_only),
             )
         )
-        self._trim_window(current_time)
 
         was_active = self._active
-        self._active = len(self._history) >= self.packet_threshold
-        if self._active:
-            if self._detected_at is None:
-                self._detected_at = current_time
-        else:
-            self._detected_at = None
-
-        if not self._active:
-            return was_active
-
-        return (
-            not was_active
-            or current_time - self._last_broadcast_at >= self.broadcast_cooldown_secs
-        )
+        self._sync_active_state(current_time)
+        return self._should_broadcast(current_time, was_active)
 
     def _trim_window(self, current_time: float) -> None:
         cutoff = current_time - self.window_secs
         while self._history and self._history[0].timestamp < cutoff:
             self._history.popleft()
+
+    def _sync_active_state(self, current_time: float) -> None:
+        """Apply rolling-window trim and threshold/hold logic."""
+        self._trim_window(current_time)
+        above_threshold = len(self._history) >= self.packet_threshold
+        if above_threshold:
+            if self._detected_at is None:
+                self._detected_at = current_time
+            if self.hold_secs > 0:
+                self._hold_until = current_time + self.hold_secs
+
+        if above_threshold or (
+            self.hold_secs > 0
+            and self._hold_until is not None
+            and current_time < self._hold_until
+        ):
+            self._active = True
+            return
+
+        self._active = False
+        self._detected_at = None
+        self._hold_until = None
+
+    def _should_broadcast(self, current_time: float, was_active: bool) -> bool:
+        if not self._active:
+            return was_active
+        return (
+            not was_active
+            or current_time - self._last_broadcast_at >= self.broadcast_cooldown_secs
+        )
 
     def _cluster_packets(self) -> list[dict[str, Any]]:
         clusters: dict[str, list[_PacketRecord]] = {}
@@ -166,11 +185,8 @@ class SpamLiveTracker:
 
     async def get_live_status(self) -> SpamLiveStatus:
         current_time = time.time()
-        self._trim_window(current_time)
-        self._active = len(self._history) >= self.packet_threshold
-        if not self._active:
-            self._detected_at = None
-        clusters = self._cluster_packets() if self._active else []
+        self._sync_active_state(current_time)
+        clusters = self._cluster_packets() if self._active and self._history else []
         status = await self._build_status_async(current_time, clusters)
         self._last_status = status
         return status
@@ -196,7 +212,7 @@ class SpamLiveTracker:
             )
 
         return SpamLiveStatus(
-            active=len(self._history) >= self.packet_threshold,
+            active=self._active,
             window_secs=int(self.window_secs),
             packet_threshold=self.packet_threshold,
             total_packets=len(self._history),

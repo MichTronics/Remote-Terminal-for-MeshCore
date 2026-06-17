@@ -12,7 +12,7 @@ import {
 import type { LatLngBoundsExpression } from 'leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import type { Contact, LocationHistory, RadioConfig, RawPacket } from '../types';
+import type { Channel, Contact, LocationHistory, RadioConfig, RawPacket } from '../types';
 import { api } from '../api';
 import { formatTime } from '../utils/messageParser';
 import { isValidLocation } from '../utils/pathUtils';
@@ -29,6 +29,7 @@ import { MapLivePacketFeed } from './MapLivePacketFeed';
 
 interface MapViewProps {
   contacts: Contact[];
+  channels?: Channel[];
   /** Public key of contact to focus on and open popup */
   focusedKey?: string | null;
   rawPackets?: RawPacket[];
@@ -774,6 +775,7 @@ function ParticleOverlay({ particles }: { particles: MapParticle[] }) {
 
 export function MapView({
   contacts,
+  channels,
   focusedKey,
   rawPackets,
   config,
@@ -1319,6 +1321,7 @@ export function MapView({
         <MapLivePacketFeed
           packets={rawPackets ?? []}
           contacts={contacts}
+          channels={channels}
           visible={showPackets}
         />
       </div>

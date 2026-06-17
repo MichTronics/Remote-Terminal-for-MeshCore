@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GripHorizontal } from 'lucide-react';
 
-import type { Contact, RawPacket } from '../types';
+import type { Channel, Contact, RawPacket } from '../types';
 import { cn } from '@/lib/utils';
 import {
+  buildMapPacketFeedContext,
   buildMapPacketFeedEntries,
-  buildMapPacketFeedIndexes,
   type MapPacketFeedEntry,
 } from '../utils/mapPacketFeed';
 
@@ -42,27 +42,30 @@ function saveStoredPosition(position: StoredPosition): void {
 interface MapLivePacketFeedProps {
   packets: RawPacket[];
   contacts: Contact[];
+  channels?: Channel[];
   visible: boolean;
 }
 
 function FeedLine({ entry }: { entry: MapPacketFeedEntry }) {
   return (
-    <div className="text-[0.6875rem] leading-snug text-foreground/90 font-mono truncate">
+    <div className="text-[0.8125rem] leading-snug text-foreground/90 font-mono whitespace-normal break-words">
       <span className="font-semibold" style={{ color: entry.typeColor }}>
         {entry.typeLabel}
       </span>{' '}
       {entry.hopsPrefix && <span className="text-muted-foreground">{entry.hopsPrefix}</span>}
-      <span className="text-foreground/80">
-        From {entry.senderLabel}
-        {entry.messageSuffix && (
-          <span className="text-muted-foreground">{entry.messageSuffix}</span>
-        )}
-      </span>
+      {entry.senderLabel && (
+        <span className="text-foreground/80">
+          From {entry.senderLabel}
+          {entry.messageSuffix && (
+            <span className="text-muted-foreground">{entry.messageSuffix}</span>
+          )}
+        </span>
+      )}
     </div>
   );
 }
 
-export function MapLivePacketFeed({ packets, contacts, visible }: MapLivePacketFeedProps) {
+export function MapLivePacketFeed({ packets, contacts, channels, visible }: MapLivePacketFeedProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const [position, setPosition] = useState<StoredPosition>(
@@ -70,10 +73,13 @@ export function MapLivePacketFeed({ packets, contacts, visible }: MapLivePacketF
   );
   const [dragging, setDragging] = useState(false);
 
-  const indexes = useMemo(() => buildMapPacketFeedIndexes(contacts), [contacts]);
+  const feedContext = useMemo(
+    () => buildMapPacketFeedContext(contacts, channels),
+    [contacts, channels]
+  );
   const entries = useMemo(
-    () => (visible ? buildMapPacketFeedEntries(packets, indexes) : []),
-    [packets, indexes, visible]
+    () => (visible ? buildMapPacketFeedEntries(packets, feedContext) : []),
+    [packets, feedContext, visible]
   );
 
   const clampPosition = useCallback((next: StoredPosition): StoredPosition => {
@@ -151,7 +157,7 @@ export function MapLivePacketFeed({ packets, contacts, visible }: MapLivePacketF
     <div
       ref={containerRef}
       className={cn(
-        'absolute z-[500] w-[min(20rem,calc(100%-1.5rem))] rounded-md border border-border/70 bg-background/90 shadow-lg backdrop-blur-sm pointer-events-auto',
+        'absolute z-[500] w-[28rem] max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 shadow-lg backdrop-blur-sm pointer-events-auto',
         dragging && 'select-none'
       )}
       style={{ left: position.x, top: position.y }}
@@ -172,9 +178,9 @@ export function MapLivePacketFeed({ packets, contacts, visible }: MapLivePacketF
         <span className="ml-auto tabular-nums">{entries.length}/12</span>
       </div>
 
-      <div className="px-2.5 py-2 flex flex-col gap-1.5 min-h-[4.5rem] max-h-[11.5rem] overflow-hidden">
+      <div className="px-3 py-2.5 flex flex-col gap-1.5 h-[14.5rem] overflow-y-auto overflow-x-hidden">
         {entries.length === 0 ? (
-          <div className="text-[0.6875rem] text-muted-foreground py-2 text-center">
+          <div className="text-[0.8125rem] text-muted-foreground py-2 text-center">
             Waiting for packets...
           </div>
         ) : (

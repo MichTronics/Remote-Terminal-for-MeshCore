@@ -225,6 +225,7 @@ export function ConversationPane({
           <Suspense fallback={<LoadingPane label="Loading map..." />}>
             <MapView
               contacts={contacts}
+              channels={channels}
               focusedKey={activeConversation.mapFocusKey}
               rawPackets={rawPackets}
               config={config}

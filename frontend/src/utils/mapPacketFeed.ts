@@ -1,12 +1,14 @@
-import { PayloadType } from '@michaelhart/meshcore-decoder';
-import type { Contact, RawPacket } from '../types';
-import { getContactDisplayName } from './pubkey';
 import {
-  getPacketLabel,
-  parsePacket,
-  PARTICLE_COLOR_MAP,
-  type ParsedPacket,
-} from './visualizerUtils';
+  MeshCoreDecoder,
+  PayloadType,
+  type DecodedPacket,
+  type DecryptionOptions,
+} from '@michaelhart/meshcore-decoder';
+
+import type { Channel, Contact, RawPacket } from '../types';
+import { createDecoderOptions } from './rawPacketInspector';
+import { getContactDisplayName } from './pubkey';
+import { getPacketLabel, PARTICLE_COLOR_MAP } from './visualizerUtils';
 import { getRawPacketObservationKey } from './rawPacketIdentity';
 
 export const MAP_PACKET_FEED_LIMIT = 12;
@@ -28,13 +30,18 @@ export interface MapPacketFeedEntry {
   typeLabel: string;
   typeColor: string;
   hopsPrefix: string;
-  senderLabel: string;
+  senderLabel: string | null;
   messageSuffix: string;
 }
 
 export interface MapPacketFeedIndexes {
   prefixIndex: Map<string, Contact[]>;
   nameIndex: Map<string, Contact>;
+}
+
+export interface MapPacketFeedContext {
+  indexes: MapPacketFeedIndexes;
+  decoderOptions?: DecryptionOptions;
 }
 
 export function buildMapPacketFeedIndexes(contacts: Contact[]): MapPacketFeedIndexes {
@@ -55,6 +62,16 @@ export function buildMapPacketFeedIndexes(contacts: Contact[]): MapPacketFeedInd
   return { prefixIndex, nameIndex };
 }
 
+export function buildMapPacketFeedContext(
+  contacts: Contact[],
+  channels?: Channel[] | null
+): MapPacketFeedContext {
+  return {
+    indexes: buildMapPacketFeedIndexes(contacts),
+    decoderOptions: createDecoderOptions(channels),
+  };
+}
+
 function resolveContactByPrefix(
   token: string,
   prefixIndex: Map<string, Contact[]>
@@ -67,62 +84,12 @@ function formatPubkeySnippet(pubkey: string): string {
   return pubkey.slice(0, 6).toLowerCase();
 }
 
-export function formatMapPacketSender(
-  parsed: ParsedPacket | null,
-  packet: RawPacket,
-  indexes: MapPacketFeedIndexes
-): string {
-  const { prefixIndex, nameIndex } = indexes;
-
-  let contact: Contact | null = null;
-  let fallbackHex: string | null = null;
-
-  if (parsed?.advertPubkey) {
-    fallbackHex = parsed.advertPubkey;
-    contact = resolveContactByPrefix(parsed.advertPubkey.slice(0, 12), prefixIndex);
-  } else if (parsed?.groupTextSender) {
-    contact = nameIndex.get(parsed.groupTextSender) ?? null;
-    if (!contact) {
-      return parsed.groupTextSender;
-    }
-  } else if (parsed?.srcHash) {
-    fallbackHex = parsed.srcHash;
-    contact = resolveContactByPrefix(parsed.srcHash, prefixIndex);
-  } else if (parsed?.anonRequestPubkey) {
-    fallbackHex = parsed.anonRequestPubkey;
-    contact = resolveContactByPrefix(parsed.anonRequestPubkey.slice(0, 12), prefixIndex);
-  } else if (packet.decrypted_info?.contact_key) {
-    fallbackHex = packet.decrypted_info.contact_key;
-    contact = resolveContactByPrefix(packet.decrypted_info.contact_key.slice(0, 12), prefixIndex);
-  } else if (packet.decrypted_info?.sender) {
-    contact = nameIndex.get(packet.decrypted_info.sender) ?? null;
-    if (!contact) {
-      return packet.decrypted_info.sender;
-    }
-  }
-
-  if (contact) {
-    const displayName = getContactDisplayName(
-      contact.name,
-      contact.public_key,
-      contact.last_advert
-    );
-    const pubkeySource = contact.public_key || fallbackHex;
-    if (pubkeySource) {
-      return `${displayName} (${formatPubkeySnippet(pubkeySource)})`;
-    }
-    return displayName;
-  }
-
-  if (fallbackHex) {
-    return formatPubkeySnippet(fallbackHex);
-  }
-
-  if (packet.decrypted_info?.sender) {
-    return packet.decrypted_info.sender;
-  }
-
-  return 'unknown';
+function getDecodedPathTokens(decoded: DecodedPacket): string[] {
+  const tracePayload =
+    decoded.payloadType === PayloadType.Trace && decoded.payload.decoded
+      ? (decoded.payload.decoded as { pathHashes?: string[] })
+      : null;
+  return tracePayload?.pathHashes || decoded.path || [];
 }
 
 export function formatMapPacketHops(pathBytes: string[]): string {
@@ -138,9 +105,149 @@ export function formatMapPacketDecodedMessage(message: string | null | undefined
   return `: ${trimmed.slice(0, 28)}...`;
 }
 
-function payloadTypeLabel(packet: RawPacket, parsed: ParsedPacket | null): string {
-  if (parsed) {
-    return PACKET_TYPE_LABELS[getPacketLabel(parsed.payloadType)] ?? 'UNKNOWN';
+function formatKnownOrToken(
+  label: string,
+  pubkey: string | null | undefined,
+  indexes: MapPacketFeedIndexes
+): string {
+  if (pubkey) {
+    const contact = resolveContactByPrefix(pubkey, indexes.prefixIndex);
+    if (contact) {
+      const displayName = getContactDisplayName(
+        contact.name,
+        contact.public_key,
+        contact.last_advert
+      );
+      return `${displayName} (${formatPubkeySnippet(contact.public_key)})`;
+    }
+    return `${label} (${formatPubkeySnippet(pubkey)})`;
+  }
+  return label;
+}
+
+function formatTokenOrContact(
+  token: string | null | undefined,
+  indexes: MapPacketFeedIndexes
+): string | null {
+  if (!token?.trim()) return null;
+  const normalized = token.trim();
+  const contact = resolveContactByPrefix(normalized, indexes.prefixIndex);
+  if (contact) {
+    const displayName = getContactDisplayName(
+      contact.name,
+      contact.public_key,
+      contact.last_advert
+    );
+    return `${displayName} (${formatPubkeySnippet(contact.public_key)})`;
+  }
+  return normalized.toLowerCase();
+}
+
+function extractDecodedMessage(packet: RawPacket, decoded: DecodedPacket): string | null {
+  const backendMessage = packet.decrypted_info?.message?.trim();
+  if (backendMessage) return backendMessage;
+
+  if (decoded.payloadType === PayloadType.GroupText && decoded.payload.decoded) {
+    const payload = decoded.payload.decoded as {
+      decrypted?: { message?: string };
+    };
+    const message = payload.decrypted?.message?.trim();
+    if (message) return message;
+  }
+
+  if (decoded.payloadType === PayloadType.TextMessage && decoded.payload.decoded) {
+    const payload = decoded.payload.decoded as {
+      decrypted?: { message?: string };
+    };
+    const message = payload.decrypted?.message?.trim();
+    if (message) return message;
+  }
+
+  return null;
+}
+
+export function formatMapPacketSenderFromDecoded(
+  packet: RawPacket,
+  decoded: DecodedPacket,
+  indexes: MapPacketFeedIndexes
+): string | null {
+  switch (decoded.payloadType) {
+    case PayloadType.Advert: {
+      const payload = decoded.payload.decoded as {
+        publicKey?: string;
+        appData?: { name?: string };
+      } | null;
+      if (payload?.appData?.name) {
+        return formatKnownOrToken(payload.appData.name, payload.publicKey, indexes);
+      }
+      if (payload?.publicKey) {
+        return formatTokenOrContact(payload.publicKey, indexes);
+      }
+      break;
+    }
+    case PayloadType.TextMessage: {
+      const payload = decoded.payload.decoded as { sourceHash?: string } | null;
+      return formatTokenOrContact(payload?.sourceHash, indexes);
+    }
+    case PayloadType.GroupText: {
+      if (packet.decrypted_info?.sender) {
+        const contact = indexes.nameIndex.get(packet.decrypted_info.sender);
+        if (contact) {
+          return formatKnownOrToken(
+            getContactDisplayName(contact.name, contact.public_key, contact.last_advert),
+            contact.public_key,
+            indexes
+          );
+        }
+        return packet.decrypted_info.sender;
+      }
+      const payload = decoded.payload.decoded as {
+        decrypted?: { sender?: string };
+      } | null;
+      const sender = payload?.decrypted?.sender;
+      if (sender) {
+        const contact = indexes.nameIndex.get(sender);
+        if (contact) {
+          return formatKnownOrToken(
+            getContactDisplayName(contact.name, contact.public_key, contact.last_advert),
+            contact.public_key,
+            indexes
+          );
+        }
+        return sender;
+      }
+      break;
+    }
+    case PayloadType.Request:
+    case PayloadType.Response: {
+      const payload = decoded.payload.decoded as { sourceHash?: string } | null;
+      return formatTokenOrContact(payload?.sourceHash, indexes);
+    }
+    case PayloadType.AnonRequest: {
+      const payload = decoded.payload.decoded as { senderPublicKey?: string } | null;
+      return formatTokenOrContact(payload?.senderPublicKey, indexes);
+    }
+    case PayloadType.Control: {
+      const payload = decoded.payload.decoded as { publicKey?: string } | null;
+      return formatTokenOrContact(payload?.publicKey, indexes);
+    }
+    default: {
+      if (packet.decrypted_info?.sender) {
+        return formatTokenOrContact(packet.decrypted_info.sender, indexes);
+      }
+      if (packet.decrypted_info?.contact_key) {
+        return formatTokenOrContact(packet.decrypted_info.contact_key, indexes);
+      }
+      break;
+    }
+  }
+
+  return null;
+}
+
+function payloadTypeLabel(packet: RawPacket, decoded: DecodedPacket | null): string {
+  if (decoded?.isValid) {
+    return PACKET_TYPE_LABELS[getPacketLabel(decoded.payloadType)] ?? 'UNKNOWN';
   }
   const backendType = packet.payload_type?.trim();
   if (backendType) {
@@ -149,9 +256,9 @@ function payloadTypeLabel(packet: RawPacket, parsed: ParsedPacket | null): strin
   return 'UNKNOWN';
 }
 
-function payloadTypeColor(packet: RawPacket, parsed: ParsedPacket | null): string {
-  if (parsed) {
-    return PARTICLE_COLOR_MAP[getPacketLabel(parsed.payloadType)];
+function payloadTypeColor(packet: RawPacket, decoded: DecodedPacket | null): string {
+  if (decoded?.isValid) {
+    return PARTICLE_COLOR_MAP[getPacketLabel(decoded.payloadType)];
   }
   const normalized = packet.payload_type?.toUpperCase() ?? '';
   if (normalized.includes('ADVERT')) return PARTICLE_COLOR_MAP.AD;
@@ -164,16 +271,31 @@ function payloadTypeColor(packet: RawPacket, parsed: ParsedPacket | null): strin
   return PARTICLE_COLOR_MAP['?'];
 }
 
+function decodePacket(packet: RawPacket, decoderOptions?: DecryptionOptions): DecodedPacket | null {
+  try {
+    const decoded = MeshCoreDecoder.decode(packet.data, decoderOptions);
+    return decoded.isValid ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
 export function buildMapPacketFeedEntry(
   packet: RawPacket,
-  indexes: MapPacketFeedIndexes
+  context: MapPacketFeedContext
 ): MapPacketFeedEntry {
-  const parsed = parsePacket(packet.data);
-  const typeLabel = payloadTypeLabel(packet, parsed);
-  const typeColor = payloadTypeColor(packet, parsed);
-  const hopsPrefix = formatMapPacketHops(parsed?.pathBytes ?? []);
-  const senderLabel = formatMapPacketSender(parsed, packet, indexes);
-  const messageSuffix = formatMapPacketDecodedMessage(packet.decrypted_info?.message);
+  const decoded = decodePacket(packet, context.decoderOptions);
+  const typeLabel = payloadTypeLabel(packet, decoded);
+  const typeColor = payloadTypeColor(packet, decoded);
+  const hopsPrefix = formatMapPacketHops(decoded ? getDecodedPathTokens(decoded) : []);
+  const senderLabel = decoded
+    ? formatMapPacketSenderFromDecoded(packet, decoded, context.indexes)
+    : packet.decrypted_info?.sender
+      ? formatTokenOrContact(packet.decrypted_info.sender, context.indexes)
+      : null;
+  const messageSuffix = formatMapPacketDecodedMessage(
+    decoded ? extractDecodedMessage(packet, decoded) : packet.decrypted_info?.message
+  );
 
   return {
     key: getRawPacketObservationKey(packet),
@@ -188,7 +310,7 @@ export function buildMapPacketFeedEntry(
 
 export function buildMapPacketFeedEntries(
   packets: RawPacket[],
-  indexes: MapPacketFeedIndexes,
+  context: MapPacketFeedContext,
   limit = MAP_PACKET_FEED_LIMIT
 ): MapPacketFeedEntry[] {
   const seen = new Set<string>();
@@ -199,15 +321,34 @@ export function buildMapPacketFeedEntries(
     const key = getRawPacketObservationKey(packet);
     if (seen.has(key)) continue;
     seen.add(key);
-    entries.push(buildMapPacketFeedEntry(packet, indexes));
+    entries.push(buildMapPacketFeedEntry(packet, context));
     if (entries.length >= limit) break;
   }
 
   return entries;
 }
 
-export function isAdvertPacket(packet: RawPacket): boolean {
-  const parsed = parsePacket(packet.data);
-  if (parsed) return parsed.payloadType === PayloadType.Advert;
+export function isAdvertPacket(
+  packet: RawPacket,
+  decoderOptions?: DecryptionOptions
+): boolean {
+  const decoded = decodePacket(packet, decoderOptions);
+  if (decoded) return decoded.payloadType === PayloadType.Advert;
   return packet.payload_type?.toUpperCase().includes('ADVERT') ?? false;
+}
+
+// Backwards-compatible helper for tests that only need sender formatting hooks.
+export function formatMapPacketSender(
+  _parsed: null,
+  packet: RawPacket,
+  indexes: MapPacketFeedIndexes,
+  decoderOptions?: DecryptionOptions
+): string | null {
+  const decoded = decodePacket(packet, decoderOptions);
+  if (!decoded) {
+    return packet.decrypted_info?.sender
+      ? formatTokenOrContact(packet.decrypted_info.sender, indexes)
+      : null;
+  }
+  return formatMapPacketSenderFromDecoded(packet, decoded, indexes);
 }

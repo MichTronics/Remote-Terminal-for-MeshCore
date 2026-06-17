@@ -86,11 +86,80 @@ function formatDuration(seconds: number | null): string {
 }
 
 function formatClusterHotspotLabel(cluster: SpamFloodCluster): string {
-  const name = cluster.origin_name ?? cluster.entry_name;
+  const name =
+    cluster.origin_name ??
+    cluster.entry_name ??
+    cluster.hop_names_by_token?.[cluster.entry_hop] ??
+    null;
   const hop = cluster.origin_hop ?? cluster.entry_hop;
   if (name && hop) return `${name} (${hop})`;
   if (hop) return hop;
   return '-';
+}
+
+const MAX_CLUSTER_ROUTE_HOPS = 10;
+
+function clusterLongestRouteTokens(cluster: SpamFloodCluster): string[] {
+  const tokens =
+    cluster.longest_route_tokens && cluster.longest_route_tokens.length > 0
+      ? cluster.longest_route_tokens
+      : cluster.hop_tokens;
+  return (tokens ?? []).slice(0, MAX_CLUSTER_ROUTE_HOPS);
+}
+
+function formatHopTokenLabel(hop: string, cluster: SpamFloodCluster): string {
+  const name = cluster.hop_names_by_token?.[hop];
+  return name ? `${name} (${hop})` : hop;
+}
+
+function formatClusterLongestRoute(cluster: SpamFloodCluster): string | null {
+  const tokens = clusterLongestRouteTokens(cluster);
+  if (tokens.length === 0) return null;
+  return tokens.map((hop) => formatHopTokenLabel(hop, cluster)).join(' ⇢ ');
+}
+
+function formatClusterIngressHeading(cluster: SpamFloodCluster): string | null {
+  const entryName =
+    cluster.entry_name ??
+    cluster.hop_names_by_token?.[cluster.entry_hop] ??
+    cluster.origin_name ??
+    null;
+  if (!entryName) return null;
+  return `${entryName} · ingress ${cluster.entry_hop}`;
+}
+
+function ClusterRouteDetails({ cluster }: { cluster: SpamFloodCluster }) {
+  const ingressHeading = formatClusterIngressHeading(cluster);
+  const longestRoute = formatClusterLongestRoute(cluster);
+  const lat = cluster.origin_lat ?? cluster.lat;
+  const lon = cluster.origin_lon ?? cluster.lon;
+  const hasCoords = lat != null && lon != null;
+
+  if (!ingressHeading && !longestRoute && !hasCoords) return null;
+
+  return (
+    <div className="mt-1.5 space-y-1">
+      {ingressHeading && (
+        <div className="text-[0.8125rem] font-medium text-foreground">{ingressHeading}</div>
+      )}
+      {longestRoute && (
+        <div className="font-mono text-[0.6875rem] leading-relaxed text-muted-foreground">
+          {longestRoute}
+        </div>
+      )}
+      {hasCoords && (
+        <a
+          href={buildMapUrl(lat!, lon!)}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 font-mono text-[0.6875rem] text-primary hover:underline"
+        >
+          {lat!.toFixed(5)}, {lon!.toFixed(5)}
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      )}
+    </div>
+  );
 }
 
 function episodeReportClusters(episode: SpamFloodEpisode): SpamFloodCluster[] {
@@ -109,6 +178,8 @@ function episodeReportClusters(episode: SpamFloodEpisode): SpamFloodCluster[] {
       packet_count: episode.total_packets,
       dominant_route: episode.primary_refined_route ?? hop,
       hop_tokens: [],
+      longest_route_tokens: [],
+      hop_names_by_token: {},
       refined_route: episode.primary_refined_route ?? '',
       refined_hop_tokens: [],
       traffic_share: 0,
@@ -582,8 +653,6 @@ function LiveFloodSection({ live }: { live: SpamLiveStatus | null }) {
 }
 
 function LiveHotspotCard({ cluster, index }: { cluster: SpamFloodCluster; index: number }) {
-  const hasIngressCoords = cluster.lat != null && cluster.lon != null;
-  const hasOriginCoords = cluster.origin_lat != null && cluster.origin_lon != null;
   const showRefinedRoute =
     cluster.refined_route &&
     cluster.refined_route !== cluster.dominant_route &&
@@ -626,58 +695,14 @@ function LiveHotspotCard({ cluster, index }: { cluster: SpamFloodCluster; index:
             <div className="mt-0.5 font-mono text-sm text-destructive">{cluster.refined_route}</div>
           </div>
         )}
-        <div>
-          <div className="text-muted-foreground">RF ingress path</div>
-          <div className="mt-0.5 font-mono text-sm">{cluster.dominant_route}</div>
-        </div>
-        <div>
-          <div className="text-muted-foreground">Primary entry hop</div>
-          <div className="mt-0.5 font-medium">
-            {cluster.entry_name ?? `[${cluster.entry_hop}]`}
-            <span className="ml-2 font-mono text-muted-foreground">{cluster.entry_hop}</span>
-          </div>
-        </div>
-        {cluster.origin_hop && (
+        <ClusterRouteDetails cluster={cluster} />
+        {cluster.origin_hop && cluster.origin_hop !== cluster.entry_hop && (
           <div>
             <div className="text-muted-foreground">Estimated source-side hop</div>
             <div className="mt-0.5 font-medium">
               {cluster.origin_name ?? `[${cluster.origin_hop}]`}
               <span className="ml-2 font-mono text-muted-foreground">{cluster.origin_hop}</span>
             </div>
-          </div>
-        )}
-        {hasOriginCoords && (
-          <div className="flex flex-wrap items-center gap-2">
-            <MapPin className="h-3.5 w-3.5 text-destructive" aria-hidden="true" />
-            <span className="font-mono tabular-nums">
-              {cluster.origin_lat!.toFixed(5)}, {cluster.origin_lon!.toFixed(5)}
-            </span>
-            <a
-              href={buildMapUrl(cluster.origin_lat!, cluster.origin_lon!)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-primary hover:underline"
-            >
-              Origin map
-              <ExternalLink className="h-3 w-3" aria-hidden="true" />
-            </a>
-          </div>
-        )}
-        {!hasOriginCoords && hasIngressCoords && (
-          <div className="flex flex-wrap items-center gap-2">
-            <MapPin className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-            <span className="font-mono tabular-nums">
-              {cluster.lat!.toFixed(5)}, {cluster.lon!.toFixed(5)}
-            </span>
-            <a
-              href={buildMapUrl(cluster.lat!, cluster.lon!)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-primary hover:underline"
-            >
-              Ingress map
-              <ExternalLink className="h-3 w-3" aria-hidden="true" />
-            </a>
           </div>
         )}
         <div className="text-muted-foreground">Last seen {formatSeen(cluster.last_seen)}</div>
@@ -690,13 +715,6 @@ function EpisodeHotspotCandidates({ clusters }: { clusters: SpamFloodCluster[] }
   return (
     <div className="space-y-2">
       {clusters.map((cluster, index) => {
-        const lat = cluster.origin_lat ?? cluster.lat;
-        const lon = cluster.origin_lon ?? cluster.lon;
-        const hasCoords = lat != null && lon != null;
-        const route =
-          cluster.refined_route && cluster.refined_route !== cluster.dominant_route
-            ? cluster.refined_route
-            : cluster.dominant_route;
         return (
           <div
             key={`${cluster.entry_hop}-${index}`}
@@ -712,18 +730,7 @@ function EpisodeHotspotCandidates({ clusters }: { clusters: SpamFloodCluster[] }
                 {cluster.confidence > 0 ? ` · ${cluster.confidence}% conf` : ''}
               </span>
             </div>
-            <div className="mt-1 font-mono text-[0.6875rem] text-muted-foreground">{route}</div>
-            {hasCoords && (
-              <a
-                href={buildMapUrl(lat!, lon!)}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1 inline-flex items-center gap-1 font-mono text-[0.6875rem] text-primary hover:underline"
-              >
-                {lat!.toFixed(5)}, {lon!.toFixed(5)}
-                <ExternalLink className="h-3 w-3" aria-hidden="true" />
-              </a>
-            )}
+            <ClusterRouteDetails cluster={cluster} />
           </div>
         );
       })}

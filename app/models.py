@@ -580,6 +580,14 @@ class SpamFloodCluster(BaseModel):
     packet_count: int = Field(description="Packets in this cluster during the live window")
     dominant_route: str = Field(description="Most common RF-only route label for this cluster")
     hop_tokens: list[str] = Field(description="Hop tokens for the dominant RF-only route")
+    longest_route_tokens: list[str] = Field(
+        default_factory=list,
+        description="Longest observed RF path in this cluster, capped at 10 hops",
+    )
+    hop_names_by_token: dict[str, str] = Field(
+        default_factory=dict,
+        description="Resolved contact names keyed by hop token along the display route",
+    )
     refined_route: str = Field(
         default="",
         description="Progressively narrowed shared-prefix route for this cluster",

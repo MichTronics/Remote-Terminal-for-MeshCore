@@ -5,6 +5,7 @@ import pytest
 from app.path_utils import (
     decode_path_byte,
     first_hop_hex,
+    hop_allows_prefix_name_lookup,
     normalize_contact_route,
     normalize_route_override,
     parse_explicit_hop_route,
@@ -327,3 +328,23 @@ class TestContactFromRadioDictHashMode:
         assert upsert.direct_path == ""
         assert upsert.direct_path_len == -1
         assert upsert.direct_path_hash_mode == -1
+
+
+class TestHopAllowsPrefixNameLookup:
+    def test_rejects_one_byte_hop_tokens(self):
+        assert hop_allows_prefix_name_lookup("F6") is False
+        assert hop_allows_prefix_name_lookup("aa") is False
+
+    def test_allows_multibyte_hop_tokens(self):
+        assert hop_allows_prefix_name_lookup("AA11") is True
+        assert hop_allows_prefix_name_lookup("AABBCC") is True
+
+
+class TestHopAllowsPrefixNameLookup:
+    def test_rejects_one_byte_hop_tokens(self):
+        assert hop_allows_prefix_name_lookup("F6") is False
+        assert hop_allows_prefix_name_lookup("aa") is False
+
+    def test_allows_multibyte_hop_tokens(self):
+        assert hop_allows_prefix_name_lookup("AA11") is True
+        assert hop_allows_prefix_name_lookup("AABBCC") is True

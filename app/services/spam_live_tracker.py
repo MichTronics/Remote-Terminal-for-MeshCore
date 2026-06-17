@@ -11,7 +11,7 @@ from typing import Any
 
 from app.config import settings
 from app.models import SpamFloodCluster, SpamLiveStatus
-from app.path_utils import split_path_hex
+from app.path_utils import split_path_hex, hop_allows_prefix_name_lookup
 from app.repository.contacts import ContactRepository
 from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
 from app.services.spam_baseline import SpamBaselineService
@@ -24,6 +24,8 @@ from app.services.spam_path_analysis import (
 )
 
 logger = logging.getLogger(__name__)
+
+_MAX_DISPLAY_ROUTE_HOPS = 10
 
 # Default GWNL / community MQTT bridge gateways (full public keys, lowercase).
 _DEFAULT_GATEWAY_PUBKEYS: tuple[str, ...] = (
@@ -250,6 +252,15 @@ class SpamLiveTracker:
                     "hop_tokens": cluster.hop_tokens or existing.hop_tokens,
                     "refined_route": cluster.refined_route or existing.refined_route,
                     "refined_hop_tokens": cluster.refined_hop_tokens or existing.refined_hop_tokens,
+                    "longest_route_tokens": (
+                        cluster.longest_route_tokens
+                        if len(cluster.longest_route_tokens) >= len(existing.longest_route_tokens)
+                        else existing.longest_route_tokens
+                    ),
+                    "hop_names_by_token": {
+                        **existing.hop_names_by_token,
+                        **cluster.hop_names_by_token,
+                    },
                     "narrowing_depth": max(existing.narrowing_depth, cluster.narrowing_depth),
                     "concentration": max(existing.concentration, cluster.concentration),
                     "cluster_mode": cluster.cluster_mode or existing.cluster_mode,
@@ -280,6 +291,20 @@ class SpamLiveTracker:
             return list(self._episode_packet_records)
         return list(self._history)
 
+    @staticmethod
+    def _longest_path_tokens(
+        records: list[_PacketRecord],
+        *,
+        max_hops: int = _MAX_DISPLAY_ROUTE_HOPS,
+    ) -> list[str]:
+        if not records:
+            return []
+        max_len = max(len(record.full_rf_path) for record in records)
+        longest_records = [record for record in records if len(record.full_rf_path) == max_len]
+        path_counts = Counter(record.full_rf_path for record in longest_records)
+        longest_path, _ = path_counts.most_common(1)[0]
+        return list(longest_path)[:max_hops]
+
     def _build_cluster_results(
         self,
         narrowed_clusters: list[tuple[Any, list[_PacketRecord]]],
@@ -295,6 +320,7 @@ class SpamLiveTracker:
                     "entry_hop": narrowed.hop_tokens[0],
                     "packet_count": len(matched_records),
                     "dominant_path_tokens": list(dominant_path),
+                    "longest_path_tokens": self._longest_path_tokens(matched_records),
                     "refined_hop_tokens": list(narrowed.hop_tokens),
                     "traffic_share": narrowed.traffic_share,
                     "concentration": narrowed.concentration,
@@ -361,6 +387,7 @@ class SpamLiveTracker:
                     "entry_hop": entry_hop,
                     "packet_count": len(matched_records),
                     "dominant_path_tokens": list(dominant_path),
+                    "longest_path_tokens": self._longest_path_tokens(matched_records),
                     "refined_hop_tokens": [entry_hop],
                     "traffic_share": len(matched_records) / total if total else 0.0,
                     "concentration": 1.0,
@@ -401,9 +428,19 @@ class SpamLiveTracker:
         enriched_clusters: list[SpamFloodCluster] = []
         for cluster in clusters:
             refined_tokens = cluster.get("refined_hop_tokens") or cluster["dominant_path_tokens"]
-            hop_geos = await self._lookup_prefix_geos(refined_tokens)
+            longest_tokens = cluster.get("longest_path_tokens") or cluster["dominant_path_tokens"]
+            lookup_tokens = list(
+                dict.fromkeys([*refined_tokens, *longest_tokens[:_MAX_DISPLAY_ROUTE_HOPS]])
+            )
+            hop_geos = await self._lookup_prefix_geos(lookup_tokens)
             entry_geo = hop_geos.get(cluster["entry_hop"], {})
             origin = estimate_origin_geo(refined_tokens, hop_geos)
+            hop_names_by_token = {
+                hop: geo["name"]
+                for hop, geo in hop_geos.items()
+                if geo.get("name")
+            }
+            entry_name = entry_geo.get("name") or hop_names_by_token.get(cluster["entry_hop"])
             confidence = cluster_confidence(
                 traffic_share=float(cluster.get("traffic_share", 0.0)),
                 narrowing_depth=int(cluster.get("narrowing_depth", 1)),
@@ -414,13 +451,15 @@ class SpamLiveTracker:
             enriched_clusters.append(
                 SpamFloodCluster(
                     entry_hop=cluster["entry_hop"],
-                    entry_name=entry_geo.get("name"),
+                    entry_name=entry_name,
                     entry_public_key=entry_geo.get("public_key"),
                     lat=entry_geo.get("lat"),
                     lon=entry_geo.get("lon"),
                     packet_count=cluster["packet_count"],
                     dominant_route=format_route(cluster["dominant_path_tokens"]),
                     hop_tokens=cluster["dominant_path_tokens"],
+                    longest_route_tokens=list(longest_tokens)[:_MAX_DISPLAY_ROUTE_HOPS],
+                    hop_names_by_token=hop_names_by_token,
                     refined_route=format_route(refined_tokens),
                     refined_hop_tokens=refined_tokens,
                     traffic_share=round(float(cluster.get("traffic_share", 0.0)), 4),
@@ -490,6 +529,9 @@ class SpamLiveTracker:
         geos: dict[str, dict[str, Any]] = {}
         for hop in hop_tokens:
             if hop in geos:
+                continue
+            if not hop_allows_prefix_name_lookup(hop):
+                geos[hop] = {}
                 continue
             contact = await ContactRepository.get_by_key_prefix(hop)
             if contact is None:

@@ -147,6 +147,19 @@ def split_path_hex(path_hex: str, hop_count: int) -> list[str]:
     return [path_hex[i : i + chars_per_hop] for i in range(0, len(path_hex), chars_per_hop)]
 
 
+def hop_allows_prefix_name_lookup(hop: str) -> bool:
+    """Return whether a hop token is wide enough for contact name lookup.
+
+    1-byte hop identifiers (2 hex characters) are excluded because the same
+    token can represent many different nodes mesh-wide. Wider tokens may still
+    resolve only when the database prefix matches exactly one contact.
+    """
+    token = hop.strip()
+    if not token or len(token) % 2 != 0:
+        return False
+    return (len(token) // 2) >= 2
+
+
 def first_hop_hex(path_hex: str, hop_count: int) -> str | None:
     """Extract the first hop identifier from a path hex string.
 

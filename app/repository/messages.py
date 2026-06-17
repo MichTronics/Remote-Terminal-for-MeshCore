@@ -16,6 +16,7 @@ from app.models import (
     SpamRouteStatsResponse,
 )
 from app.repository.contacts import ContactRepository
+from app.path_utils import hop_allows_prefix_name_lookup
 from app.services.spam_path_analysis import best_prefix_for_hop, hop_suspect_score
 
 
@@ -73,6 +74,9 @@ class MessageRepository:
     async def _enrich_spam_repeater_stats(repeaters: list[SpamRepeaterStat]) -> list[SpamRepeaterStat]:
         enriched: list[SpamRepeaterStat] = []
         for stat in repeaters:
+            if not hop_allows_prefix_name_lookup(stat.hop):
+                enriched.append(stat)
+                continue
             contact = await ContactRepository.get_by_key_prefix(stat.hop)
             if contact is None:
                 enriched.append(stat)

@@ -416,6 +416,8 @@ export interface SpamFloodCluster {
   packet_count: number;
   dominant_route: string;
   hop_tokens: string[];
+  longest_route_tokens?: string[];
+  hop_names_by_token?: Record<string, string>;
   refined_route: string;
   refined_hop_tokens: string[];
   traffic_share: number;

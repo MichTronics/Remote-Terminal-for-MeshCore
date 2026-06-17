@@ -187,7 +187,7 @@ async def test_spam_live_tracker_persists_multiple_clusters_at_end(test_db):
 async def test_spam_live_tracker_resolves_entry_geo(test_db):
     await ContactRepository.upsert(
         ContactUpsert(
-            public_key="aa" + "11" * 31,
+            public_key="aa11" + "22" * 31,
             name="Ingress Repeater",
             type=2,
             lat=52.12345,
@@ -196,8 +196,8 @@ async def test_spam_live_tracker_resolves_entry_geo(test_db):
     )
 
     tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
-    await tracker.observe_and_maybe_alert(path_hex="AA11CC", path_len=2, observed_at=1_700_000_000)
-    await tracker.observe_and_maybe_alert(path_hex="AA11DD", path_len=2, observed_at=1_700_000_001)
+    await tracker.observe_and_maybe_alert(path_hex="AA11CCDD", path_len=2, observed_at=1_700_000_000)
+    await tracker.observe_and_maybe_alert(path_hex="AA11EEFF", path_len=2, observed_at=1_700_000_001)
 
     status = await tracker.get_live_status()
     assert status.active is True
@@ -206,6 +206,70 @@ async def test_spam_live_tracker_resolves_entry_geo(test_db):
     assert cluster.entry_name == "Ingress Repeater"
     assert cluster.lat == pytest.approx(52.12345)
     assert cluster.lon == pytest.approx(4.56789)
+    assert cluster.longest_route_tokens[0] == "AA11"
+    assert cluster.hop_names_by_token.get("AA11") == "Ingress Repeater"
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_skips_one_byte_hop_names_even_when_unique(test_db):
+    await ContactRepository.upsert(
+        ContactUpsert(
+            public_key="f6" + "11" * 31,
+            name="Should Not Label",
+            type=2,
+            lat=52.0,
+            lon=4.0,
+        )
+    )
+
+    tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
+    await tracker.observe_and_maybe_alert(path_hex="F611", path_len=2, observed_at=1_700_000_000)
+    await tracker.observe_and_maybe_alert(path_hex="F622", path_len=2, observed_at=1_700_000_001)
+
+    status = await tracker.get_live_status()
+    cluster = status.clusters[0]
+    assert cluster.entry_hop == "F6"
+    assert cluster.entry_name is None
+    assert "F6" not in cluster.hop_names_by_token
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_skips_two_byte_hop_names_when_prefix_is_ambiguous(test_db):
+    await ContactRepository.upsert(
+        ContactUpsert(
+            public_key="aa11" + "22" * 31,
+            name="Repeater A",
+            type=2,
+        )
+    )
+    await ContactRepository.upsert(
+        ContactUpsert(
+            public_key="aa11" + "33" * 31,
+            name="Repeater B",
+            type=2,
+        )
+    )
+
+    tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
+    await tracker.observe_and_maybe_alert(path_hex="AA11CCDD", path_len=2, observed_at=1_700_000_000)
+    await tracker.observe_and_maybe_alert(path_hex="AA11EEFF", path_len=2, observed_at=1_700_000_001)
+
+    status = await tracker.get_live_status()
+    cluster = status.clusters[0]
+    assert cluster.entry_hop == "AA11"
+    assert cluster.entry_name is None
+    assert "AA11" not in cluster.hop_names_by_token
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_longest_route_tokens_use_max_hop_path():
+    tracker = _make_tracker(packet_threshold=2, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
+    await tracker.observe_and_maybe_alert(path_hex="AA11", path_len=2, observed_at=1_700_000_000)
+    await tracker.observe_and_maybe_alert(path_hex="AA1122BB", path_len=4, observed_at=1_700_000_001)
+
+    clusters = tracker._cluster_packets()
+    assert len(clusters) == 1
+    assert clusters[0]["longest_path_tokens"] == ["AA", "11", "22", "BB"]
 
 
 @pytest.mark.asyncio

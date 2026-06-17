@@ -100,7 +100,7 @@ function getDecodedPathTokens(decoded: DecodedPacket): string[] {
 export function formatMapPacketHops(pathBytes: string[]): string {
   const count = pathBytes.length;
   if (count === 0) return '';
-  return `(${count}->) `;
+  return `(${count}⇢) `;
 }
 
 export function formatMapPacketFeedMessageBody(message: string | null | undefined): string {

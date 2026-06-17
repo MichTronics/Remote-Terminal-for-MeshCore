@@ -51,14 +51,14 @@ function FeedLine({ entry }: { entry: MapPacketFeedEntry }) {
     <div className="text-[0.8125rem] leading-[0.9] text-foreground/90 font-mono whitespace-normal break-words">
       <div>
         <span className="font-semibold" style={{ color: entry.typeColor }}>
-          {entry.typeLabel}
+          {(entry.typeLabel).padEnd(9, ' ')}
         </span>{' '}
         {entry.hopsPrefix && <span className="text-muted-foreground">{entry.hopsPrefix}</span>}
         {entry.senderLabel && (
           <span className="text-foreground/80">
             From {entry.senderLabel}
             {entry.channelTargetLabel && (
-              <span className="text-foreground/80"> to {entry.channelTargetLabel}</span>
+              <span className="text-foreground/80 text-[#14b8a6]"> to {entry.channelTargetLabel}</span>
             )}
             {entry.inlineSuffix && (
               <span className="text-muted-foreground">{entry.inlineSuffix}</span>
@@ -67,8 +67,8 @@ function FeedLine({ entry }: { entry: MapPacketFeedEntry }) {
         )}
       </div>
       {entry.messageBody && (
-        <div className="text-muted-foreground">
-          {'  '}
+        <div className="text-foreground/80">
+          {'\u00A0\u00A0'}
           {entry.messageBody}
         </div>
       )}

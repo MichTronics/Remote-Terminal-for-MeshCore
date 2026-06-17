@@ -25,6 +25,7 @@ import {
   dedupeConsecutive,
 } from '../utils/visualizerUtils';
 import { getRawPacketObservationKey } from '../utils/rawPacketIdentity';
+import { MapLivePacketFeed } from './MapLivePacketFeed';
 
 interface MapViewProps {
   contacts: Contact[];
@@ -1315,6 +1316,11 @@ export function MapView({
 
           {showPackets && <ParticleOverlay particles={particles} />}
         </MapContainer>
+        <MapLivePacketFeed
+          packets={rawPackets ?? []}
+          contacts={contacts}
+          visible={showPackets}
+        />
       </div>
     </div>
   );

@@ -48,7 +48,7 @@ interface MapLivePacketFeedProps {
 
 function FeedLine({ entry }: { entry: MapPacketFeedEntry }) {
   return (
-    <div className="text-[0.8125rem] leading-snug text-foreground/90 font-mono whitespace-normal break-words">
+    <div className="text-[0.8125rem] leading-[0.9] text-foreground/90 font-mono whitespace-normal break-words">
       <span className="font-semibold" style={{ color: entry.typeColor }}>
         {entry.typeLabel}
       </span>{' '}
@@ -178,7 +178,7 @@ export function MapLivePacketFeed({ packets, contacts, channels, visible }: MapL
         <span className="ml-auto tabular-nums">{entries.length}/12</span>
       </div>
 
-      <div className="px-3 py-2.5 flex flex-col gap-1.5 h-[14.5rem] overflow-y-auto overflow-x-hidden">
+      <div className="px-3 py-2.5 flex flex-col gap-1 h-[13rem] overflow-y-auto overflow-x-hidden leading-[0.9]">
         {entries.length === 0 ? (
           <div className="text-[0.8125rem] text-muted-foreground py-2 text-center">
             Waiting for packets...

@@ -125,6 +125,14 @@ function formatKnownOrToken(
   return label;
 }
 
+function formatTokenForDisplay(token: string): string {
+  const normalized = token.trim().toLowerCase();
+  if (/^[0-9a-f]+$/i.test(normalized) && normalized.length > 6) {
+    return normalized.slice(0, 6);
+  }
+  return normalized;
+}
+
 function formatTokenOrContact(
   token: string | null | undefined,
   indexes: MapPacketFeedIndexes
@@ -140,7 +148,7 @@ function formatTokenOrContact(
     );
     return `${displayName} (${formatPubkeySnippet(contact.public_key)})`;
   }
-  return normalized.toLowerCase();
+  return formatTokenForDisplay(normalized);
 }
 
 function extractDecodedMessage(packet: RawPacket, decoded: DecodedPacket): string | null {
@@ -164,6 +172,23 @@ function extractDecodedMessage(packet: RawPacket, decoded: DecodedPacket): strin
   }
 
   return null;
+}
+
+export function formatMapPacketGroupTextSuffix(
+  packet: RawPacket,
+  decoded: DecodedPacket
+): string {
+  const message = extractDecodedMessage(packet, decoded);
+  if (message) {
+    return formatMapPacketDecodedMessage(message);
+  }
+
+  const payload = decoded.payload.decoded as { channelHash?: string } | null;
+  const channelHash = payload?.channelHash?.trim();
+  if (channelHash) {
+    return ` *encrypted* ch:${channelHash.toUpperCase()}`;
+  }
+  return ' *encrypted*';
 }
 
 export function formatMapPacketSenderFromDecoded(
@@ -203,6 +228,7 @@ export function formatMapPacketSenderFromDecoded(
       }
       const payload = decoded.payload.decoded as {
         decrypted?: { sender?: string };
+        channelHash?: string;
       } | null;
       const sender = payload?.decrypted?.sender;
       if (sender) {
@@ -215,6 +241,10 @@ export function formatMapPacketSenderFromDecoded(
           );
         }
         return sender;
+      }
+      const pathTokens = getDecodedPathTokens(decoded);
+      if (pathTokens.length > 0) {
+        return formatTokenForDisplay(pathTokens[0]);
       }
       break;
     }
@@ -293,9 +323,12 @@ export function buildMapPacketFeedEntry(
     : packet.decrypted_info?.sender
       ? formatTokenOrContact(packet.decrypted_info.sender, context.indexes)
       : null;
-  const messageSuffix = formatMapPacketDecodedMessage(
-    decoded ? extractDecodedMessage(packet, decoded) : packet.decrypted_info?.message
-  );
+  const messageSuffix =
+    decoded?.payloadType === PayloadType.GroupText
+      ? formatMapPacketGroupTextSuffix(packet, decoded)
+      : formatMapPacketDecodedMessage(
+          decoded ? extractDecodedMessage(packet, decoded) : packet.decrypted_info?.message
+        );
 
   return {
     key: getRawPacketObservationKey(packet),

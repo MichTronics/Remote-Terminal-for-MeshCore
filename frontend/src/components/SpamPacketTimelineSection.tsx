@@ -61,6 +61,13 @@ function formatGeneratedAt(timestamp: number): string {
   });
 }
 
+interface TimelineChartRow {
+  idx: number;
+  label: string;
+  total: number;
+  [category: string]: string | number;
+}
+
 interface SpamPacketTimelineSectionProps {
   refreshNonce?: number;
 }
@@ -106,8 +113,8 @@ export function SpamPacketTimelineSection({ refreshNonce = 0 }: SpamPacketTimeli
 
   const chartData = useMemo(() => {
     if (!data) return [];
-    return data.buckets.map((bucket, index) => {
-      const entry: Record<string, string | number> = {
+    return data.buckets.map((bucket, index): TimelineChartRow => {
+      const entry: TimelineChartRow = {
         idx: index,
         label: formatBucketLabel(bucket.timestamp),
         total: bucket.total,

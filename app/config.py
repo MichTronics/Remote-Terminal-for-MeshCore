@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         ),
     )
     spam_live_window_secs: int = Field(default=30, ge=5, le=300)
-    spam_live_packet_threshold: int = Field(default=50, ge=5, le=1000)
+    spam_live_packet_threshold: int = Field(default=22, ge=5, le=1000)
     spam_live_cluster_min_ratio: float = Field(default=0.15, ge=0.05, le=1.0)
     spam_live_broadcast_cooldown_secs: int = Field(default=10, ge=1, le=120)
 

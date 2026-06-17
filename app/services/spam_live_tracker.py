@@ -66,6 +66,9 @@ class SpamLiveTracker:
         default_factory=lambda: float(settings.spam_live_broadcast_cooldown_secs)
     )
     hold_secs: float = field(default_factory=lambda: float(settings.spam_live_hold_secs))
+    episode_retention_secs: float = field(
+        default_factory=lambda: float(settings.spam_live_episode_retention_secs)
+    )
 
     _history: deque[_PacketRecord] = field(default_factory=deque, init=False)
     _gateway_pubkeys: frozenset[str] = field(default_factory=_effective_gateway_pubkeys, init=False)
@@ -124,32 +127,48 @@ class SpamLiveTracker:
         self._sync_active_state(current_time)
         return self._should_broadcast(current_time, was_active)
 
+    def _episode_retention_horizon(self) -> float:
+        configured = self.episode_retention_secs
+        if configured > 0:
+            return configured
+        return max(self.hold_secs, self.window_secs)
+
+    def _retention_cutoff(self, current_time: float) -> float:
+        if self._detected_at is not None:
+            horizon = self._episode_retention_horizon()
+            return max(self._detected_at, current_time - horizon)
+        return current_time - self.window_secs
+
     def _trim_window(self, current_time: float) -> None:
-        cutoff = current_time - self.window_secs
+        cutoff = self._retention_cutoff(current_time)
         while self._history and self._history[0].timestamp < cutoff:
             self._history.popleft()
 
+    def _trigger_window_count(self, current_time: float) -> int:
+        cutoff = current_time - self.window_secs
+        return sum(1 for record in self._history if record.timestamp >= cutoff)
+
     def _sync_active_state(self, current_time: float) -> None:
-        """Apply rolling-window trim and threshold/hold logic."""
-        self._trim_window(current_time)
-        above_threshold = len(self._history) >= self.packet_threshold
+        """Apply retention trim and threshold/hold logic."""
+        above_threshold = self._trigger_window_count(current_time) >= self.packet_threshold
         if above_threshold:
             if self._detected_at is None:
                 self._detected_at = current_time
             if self.hold_secs > 0:
                 self._hold_until = current_time + self.hold_secs
 
-        if above_threshold or (
+        in_hold = (
             self.hold_secs > 0
             and self._hold_until is not None
             and current_time < self._hold_until
-        ):
-            self._active = True
-            return
+        )
+        self._active = above_threshold or in_hold
+        self._trim_window(current_time)
 
-        self._active = False
-        self._detected_at = None
-        self._hold_until = None
+        if not self._active:
+            self._detected_at = None
+            self._hold_until = None
+            self._trim_window(current_time)
 
     def _should_broadcast(self, current_time: float, was_active: bool) -> bool:
         if not self._active:
@@ -215,7 +234,9 @@ class SpamLiveTracker:
             active=self._active,
             window_secs=int(self.window_secs),
             packet_threshold=self.packet_threshold,
-            total_packets=len(self._history),
+            total_packets=self._trigger_window_count(current_time),
+            episode_packets=len(self._history),
+            episode_window_secs=int(self._episode_retention_horizon()),
             detected_at=int(self._detected_at) if self._detected_at is not None else None,
             clusters=enriched_clusters,
         )

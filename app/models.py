@@ -578,9 +578,19 @@ class SpamLiveStatus(BaseModel):
     active: bool = Field(
         description="True while flood volume exceeds threshold or within the post-flood hold period"
     )
-    window_secs: int = Field(description="Rolling window size in seconds")
+    window_secs: int = Field(description="Trigger window size in seconds (rate threshold)")
     packet_threshold: int = Field(description="Packet count that triggers an active flood alert")
-    total_packets: int = Field(description="Current packet count inside the rolling window")
+    total_packets: int = Field(
+        description="Packet count inside the trigger window (used for threshold comparison)"
+    )
+    episode_packets: int = Field(
+        default=0,
+        description="Packets retained for the current flood episode (cluster analysis)",
+    )
+    episode_window_secs: int = Field(
+        default=0,
+        description="Retention horizon in seconds for episode packet history while alarm is active",
+    )
     detected_at: int | None = Field(
         default=None, description="Unix timestamp when the current flood episode started"
     )

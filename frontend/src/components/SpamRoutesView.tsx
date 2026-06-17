@@ -388,7 +388,11 @@ function LiveFloodSection({ live }: { live: SpamLiveStatus | null }) {
           <div>
             <h3 className="text-sm font-semibold text-destructive">Coordinated DM Flood Detected</h3>
             <p className="mt-1 text-xs text-destructive/90">
-              {live.total_packets} packets in {live.window_secs}s
+              {live.episode_packets > 0
+                ? `${live.episode_packets} packets in episode`
+                : `${live.total_packets} packets`}
+              {' · '}
+              {live.total_packets} in last {live.window_secs}s
               {live.detected_at != null ? ` · since ${formatSeen(live.detected_at)}` : ''}
               {live.total_packets < live.packet_threshold ? ' · hold active' : ''}
             </p>

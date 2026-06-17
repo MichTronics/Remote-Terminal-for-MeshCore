@@ -131,6 +131,30 @@ async def test_spam_live_tracker_holds_alarm_after_threshold_drops():
 
     tracker._sync_active_state(base + 35)
     assert tracker._active is True
+    assert tracker._trigger_window_count(base + 35) == 0
+    assert len(tracker._history) == 3
 
     tracker._sync_active_state(base + 302)
     assert tracker._active is False
+    assert len(tracker._history) == 0
+
+
+@pytest.mark.asyncio
+async def test_spam_live_status_exposes_episode_packet_counts():
+    tracker = _make_tracker(packet_threshold=3, hold_secs=300, gateway_pubkeys=frozenset())
+    base = 1_700_000_000.0
+
+    for offset in range(3):
+        await tracker.observe_and_maybe_alert(
+            path_hex="AABB",
+            path_len=2,
+            observed_at=base + offset,
+        )
+
+    tracker._sync_active_state(base + 35)
+    status = await tracker._build_status_async(base + 35, tracker._cluster_packets())
+    assert status.active is True
+    assert status.total_packets == 0
+    assert status.episode_packets == 3
+    assert status.episode_window_secs == 300
+    assert len(status.clusters) == 1

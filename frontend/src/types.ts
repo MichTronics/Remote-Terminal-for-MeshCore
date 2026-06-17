@@ -419,6 +419,8 @@ export interface SpamLiveStatus {
   window_secs: number;
   packet_threshold: number;
   total_packets: number;
+  episode_packets: number;
+  episode_window_secs: number;
   detected_at: number | null;
   clusters: SpamFloodCluster[];
 }

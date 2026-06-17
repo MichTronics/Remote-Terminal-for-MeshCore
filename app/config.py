@@ -48,6 +48,15 @@ class Settings(BaseSettings):
         le=3600,
         description="Keep flood alarms active this many seconds after the last above-threshold observation.",
     )
+    spam_live_episode_retention_secs: int = Field(
+        default=0,
+        ge=0,
+        le=3600,
+        description=(
+            "How long to retain flood episode packets for clustering while an alarm is active. "
+            "0 means match hold_secs (recommended)."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_transport_exclusivity(self) -> "Settings":

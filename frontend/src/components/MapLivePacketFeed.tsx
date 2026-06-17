@@ -51,7 +51,7 @@ function FeedLine({ entry }: { entry: MapPacketFeedEntry }) {
     <div className="text-[0.8125rem] leading-[0.9] text-foreground/90 font-mono whitespace-normal break-words">
       <div>
         <span className="font-semibold" style={{ color: entry.typeColor }}>
-          {(entry.typeLabel).padEnd(9, ' ')}
+          {(entry.typeLabel).padEnd(9, '\u00A0')}
         </span>{' '}
         {entry.hopsPrefix && <span className="text-muted-foreground">{entry.hopsPrefix}</span>}
         {entry.senderLabel && (
@@ -68,7 +68,7 @@ function FeedLine({ entry }: { entry: MapPacketFeedEntry }) {
       </div>
       {entry.messageBody && (
         <div className="text-foreground/80">
-          {'\u00A0\u00A0'}
+          {'\u00A0'}
           {entry.messageBody}
         </div>
       )}

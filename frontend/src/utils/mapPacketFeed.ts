@@ -86,7 +86,7 @@ function resolveContactByPrefix(
 }
 
 function formatPubkeySnippet(pubkey: string): string {
-  return pubkey.slice(0, 6).toLowerCase();
+  return pubkey.slice(0, 4).toUpperCase();
 }
 
 function getDecodedPathTokens(decoded: DecodedPacket): string[] {

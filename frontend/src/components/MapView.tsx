@@ -17,6 +17,7 @@ import { api } from '../api';
 import { formatTime } from '../utils/messageParser';
 import { isValidLocation } from '../utils/pathUtils';
 import { CONTACT_TYPE_REPEATER, CONTACT_TYPE_ROOM } from '../types';
+import { getMarkerZoomScale } from '../utils/mapMarkerScale';
 import {
   parsePacket,
   getPacketLabel,
@@ -177,14 +178,6 @@ const MAP_ROLE_RADIUS: Record<MapRoleKey, number> = {
   unknown: 7,
 };
 
-/** Shrink markers when zoomed out so dense regions stay readable. */
-function getMarkerZoomScale(zoom: number): number {
-  const refZoom = 11;
-  const minScale = 0.28;
-  const scale = 2 ** ((zoom - refZoom) / 2.5);
-  return Math.min(1, Math.max(minScale, scale));
-}
-
 const MAP_ROLE_LABELS: Record<MapRoleKey, string> = {
   repeater: 'Repeater',
   companion: 'Companion',
@@ -260,7 +253,7 @@ function makeRoleMarkerIcon(role: MapRoleKey, opacity: number, scale = 1): L.Div
 }
 
 function makeTrackerMarkerIcon(scale = 1, heading: number | null = null): L.DivIcon {
-  const size = Math.max(16, Math.round(28 * scale));
+  const size = Math.max(8, Math.round(28 * scale));
   const c = size / 2;
   const dotR = Math.max(2, 3.5 * scale);
   const arrowLen = Math.max(4, 8 * scale);
@@ -424,6 +417,125 @@ function MapBoundsHandler({
   return null;
 }
 
+/** Keep marker scale in sync with Leaflet zoom (including fitBounds and wheel zoom). */
+function useMapMarkerScale(): number {
+  const map = useMap();
+  const [markerScale, setMarkerScale] = useState(() => getMarkerZoomScale(map.getZoom()));
+
+  useEffect(() => {
+    const syncScale = () => {
+      setMarkerScale(getMarkerZoomScale(map.getZoom()));
+    };
+    syncScale();
+    map.on('zoom', syncScale);
+    map.on('zoomend', syncScale);
+    map.on('zoomlevelschange', syncScale);
+    map.on('moveend', syncScale);
+    return () => {
+      map.off('zoom', syncScale);
+      map.off('zoomend', syncScale);
+      map.off('zoomlevelschange', syncScale);
+      map.off('moveend', syncScale);
+    };
+  }, [map]);
+
+  return markerScale;
+}
+
+function ContactMapMarker({
+  contact,
+  markerScale,
+  onSelectContact,
+  resolveTrackerHeading,
+  onMarkerRef,
+}: {
+  contact: Contact;
+  markerScale: number;
+  onSelectContact?: (contact: Contact) => void;
+  resolveTrackerHeading: (contact: Contact) => number | null;
+  onMarkerRef: (key: string, ref: L.Marker | null) => void;
+}) {
+  const markerRef = useRef<L.Marker | null>(null);
+  const isRepeater = contact.type === CONTACT_TYPE_REPEATER;
+  const isTracker = contact.is_tracker;
+  const roleKey = getContactRoleKey(contact);
+  const markerOpacity = getMarkerStaleOpacity(contact.last_seen);
+  const displayName = contact.name || contact.public_key.slice(0, 12);
+  const lastHeardLabel =
+    contact.last_seen != null ? formatTime(contact.last_seen) : 'Never heard by this server';
+  const trackerHeading = isTracker ? resolveTrackerHeading(contact) : null;
+
+  const icon = useMemo(
+    () =>
+      isTracker
+        ? makeTrackerMarkerIcon(markerScale, trackerHeading)
+        : makeRoleMarkerIcon(roleKey, markerOpacity, markerScale),
+    [isTracker, markerScale, trackerHeading, roleKey, markerOpacity]
+  );
+
+  useEffect(() => {
+    const marker = markerRef.current;
+    if (marker && typeof marker.setIcon === 'function') {
+      marker.setIcon(icon);
+    }
+  }, [icon]);
+
+  const setRef = useCallback(
+    (ref: L.Marker | null) => {
+      markerRef.current = ref;
+      onMarkerRef(contact.public_key, ref);
+    },
+    [contact.public_key, onMarkerRef]
+  );
+
+  return (
+    <Marker
+      ref={setRef}
+      position={[contact.lat!, contact.lon!]}
+      icon={icon}
+    >
+      <Popup>
+        <div className="text-sm">
+          <div className="font-medium flex items-center gap-1">
+            {isRepeater && (
+              <span title="Repeater" aria-hidden="true">
+                🛜
+              </span>
+            )}
+            {isTracker && (
+              <span className="text-[0.625rem] uppercase tracking-wider px-1 py-0.5 rounded bg-primary/10">
+                Tracker
+              </span>
+            )}
+            {onSelectContact ? (
+              <button
+                type="button"
+                className="p-0 bg-transparent border-0 font-inherit text-primary underline hover:text-primary/80 cursor-pointer"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectContact(contact);
+                }}
+                title={`Open conversation with ${displayName}`}
+              >
+                {displayName}
+              </button>
+            ) : (
+              displayName
+            )}
+          </div>
+          <div className="text-xs text-gray-500 mt-1">Last heard: {lastHeardLabel}</div>
+          {isTracker && trackerHeading != null && (
+            <div className="text-xs text-gray-500 mt-1">Heading: {trackerHeading.toFixed(0)}°</div>
+          )}
+          <div className="text-xs text-gray-400 mt-1 font-mono">
+            {contact.lat!.toFixed(5)}, {contact.lon!.toFixed(5)}
+          </div>
+        </div>
+      </Popup>
+    </Marker>
+  );
+}
+
 function ContactMarkersLayer({
   contacts,
   focusedContact,
@@ -435,15 +547,7 @@ function ContactMarkersLayer({
   onSelectContact?: (contact: Contact) => void;
   resolveTrackerHeading: (contact: Contact) => number | null;
 }) {
-  const map = useMap();
-  const [zoom, setZoom] = useState(() => map.getZoom());
-  const markerScale = getMarkerZoomScale(zoom);
-
-  useMapEvents({
-    zoom: () => setZoom(map.getZoom()),
-    zoomend: () => setZoom(map.getZoom()),
-  });
-
+  const markerScale = useMapMarkerScale();
   const markerRefs = useRef<Record<string, L.Marker | null>>({});
 
   const setMarkerRef = useCallback((key: string, ref: L.Marker | null) => {
@@ -474,71 +578,16 @@ function ContactMarkersLayer({
 
   return (
     <>
-      {contacts.map((contact) => {
-        const isRepeater = contact.type === CONTACT_TYPE_REPEATER;
-        const isTracker = contact.is_tracker;
-        const roleKey = getContactRoleKey(contact);
-        const markerOpacity = getMarkerStaleOpacity(contact.last_seen);
-        const displayName = contact.name || contact.public_key.slice(0, 12);
-        const lastHeardLabel =
-          contact.last_seen != null ? formatTime(contact.last_seen) : 'Never heard by this server';
-
-        const trackerHeading = isTracker ? resolveTrackerHeading(contact) : null;
-
-        const icon = isTracker
-          ? makeTrackerMarkerIcon(markerScale, trackerHeading)
-          : makeRoleMarkerIcon(roleKey, markerOpacity, markerScale);
-
-        return (
-          <Marker
-            key={contact.public_key}
-            ref={(ref) => setMarkerRef(contact.public_key, ref)}
-            position={[contact.lat!, contact.lon!]}
-            icon={icon}
-          >
-            <Popup>
-              <div className="text-sm">
-                <div className="font-medium flex items-center gap-1">
-                  {isRepeater && (
-                    <span title="Repeater" aria-hidden="true">
-                      🛜
-                    </span>
-                  )}
-                  {isTracker && (
-                    <span className="text-[0.625rem] uppercase tracking-wider px-1 py-0.5 rounded bg-primary/10">
-                      Tracker
-                    </span>
-                  )}
-                  {onSelectContact ? (
-                    <button
-                      type="button"
-                      className="p-0 bg-transparent border-0 font-inherit text-primary underline hover:text-primary/80 cursor-pointer"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onSelectContact(contact);
-                      }}
-                      title={`Open conversation with ${displayName}`}
-                    >
-                      {displayName}
-                    </button>
-                  ) : (
-                    displayName
-                  )}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">Last heard: {lastHeardLabel}</div>
-                {isTracker && trackerHeading != null && (
-                  <div className="text-xs text-gray-500 mt-1">
-                    Heading: {trackerHeading.toFixed(0)}°
-                  </div>
-                )}
-                <div className="text-xs text-gray-400 mt-1 font-mono">
-                  {contact.lat!.toFixed(5)}, {contact.lon!.toFixed(5)}
-                </div>
-              </div>
-            </Popup>
-          </Marker>
-        );
-      })}
+      {contacts.map((contact) => (
+        <ContactMapMarker
+          key={contact.public_key}
+          contact={contact}
+          markerScale={markerScale}
+          onSelectContact={onSelectContact}
+          resolveTrackerHeading={resolveTrackerHeading}
+          onMarkerRef={setMarkerRef}
+        />
+      ))}
     </>
   );
 }

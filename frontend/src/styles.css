@@ -58,7 +58,9 @@ body {
   z-index: 0 !important;
 }
 
-.custom-marker-icon {
+.custom-marker-icon,
+.mesh-role-marker,
+.tracker-marker {
   background: none !important;
   border: none !important;
 }

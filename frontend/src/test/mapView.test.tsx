@@ -4,6 +4,27 @@ import { describe, expect, it, vi } from 'vitest';
 import { MapView } from '../components/MapView';
 import type { Contact } from '../types';
 
+const mockCanvas2dContext = {
+  clearRect: vi.fn(),
+  save: vi.fn(),
+  restore: vi.fn(),
+  scale: vi.fn(),
+  beginPath: vi.fn(),
+  moveTo: vi.fn(),
+  lineTo: vi.fn(),
+  stroke: vi.fn(),
+  arc: vi.fn(),
+  fill: vi.fn(),
+  createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+};
+
+HTMLCanvasElement.prototype.getContext = vi.fn((contextId: string) => {
+  if (contextId === '2d') {
+    return mockCanvas2dContext as unknown as CanvasRenderingContext2D;
+  }
+  return null;
+}) as typeof HTMLCanvasElement.prototype.getContext;
+
 vi.mock('react-leaflet', () => {
   const BaseLayer = ({
     children,
@@ -17,14 +38,13 @@ vi.mock('react-leaflet', () => {
   return {
     MapContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
     TileLayer: () => null,
-    CircleMarker: forwardRef<
-      HTMLDivElement,
-      { children: React.ReactNode; pathOptions?: { fillColor?: string } }
-    >(({ children, pathOptions }, ref) => (
-      <div ref={ref} data-fill-color={pathOptions?.fillColor}>
-        {children}
-      </div>
-    )),
+    Marker: forwardRef<HTMLDivElement, { children: React.ReactNode; icon?: unknown }>(
+      ({ children }, ref) => (
+        <div ref={ref} data-testid="map-marker">
+          {children}
+        </div>
+      )
+    ),
     Popup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
     Polyline: () => null,
     LayersControl: LayersControlMock,
@@ -34,6 +54,11 @@ vi.mock('react-leaflet', () => {
       setMaxZoom: vi.fn(),
       setZoom: vi.fn(),
       getZoom: vi.fn(() => 2),
+      getContainer: () => document.createElement('div'),
+      getSize: () => ({ x: 800, y: 600 }),
+      latLngToContainerPoint: vi.fn(() => ({ x: 0, y: 0 })),
+      on: vi.fn(),
+      off: vi.fn(),
     }),
     useMapEvents: () => null,
   };
@@ -68,7 +93,7 @@ describe('MapView', () => {
     render(<MapView contacts={[contact]} focusedKey={contact.public_key} />);
 
     expect(
-      screen.getByText(/showing 1 contact heard in the last 7 days plus the focused contact/i)
+      screen.getByText(/showing 1 contact heard in the last 3 days plus the focused contact/i)
     ).toBeInTheDocument();
     expect(screen.getByText('Last heard: Never heard by this server')).toBeInTheDocument();
   });
@@ -139,7 +164,7 @@ describe('MapView', () => {
     expect(screen.getByText('Static')).toBeInTheDocument();
   });
 
-  it('keeps the 7-day cutoff stable for the lifetime of the mounted map', () => {
+  it('keeps the 3-day packet-window cutoff stable for the lifetime of the mounted map', () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
@@ -158,7 +183,7 @@ describe('MapView', () => {
         last_advert: null,
         lat: 41,
         lon: -73,
-        last_seen: Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60 + 60,
+        last_seen: Math.floor(Date.now() / 1000) - 3 * 24 * 60 * 60 + 60,
         on_radio: false,
         favorite: false,
         last_contacted: null,
@@ -170,12 +195,12 @@ describe('MapView', () => {
 
       const { rerender } = render(<MapView contacts={[contact]} focusedKey={null} />);
 
-      expect(screen.getByText(/showing 1 contact heard in the last 7 days/i)).toBeInTheDocument();
+      expect(screen.getByText(/showing 1 contact heard in the last 3 days/i)).toBeInTheDocument();
 
       vi.advanceTimersByTime(2 * 60 * 1000);
       rerender(<MapView contacts={[contact]} focusedKey={null} />);
 
-      expect(screen.getByText(/showing 1 contact heard in the last 7 days/i)).toBeInTheDocument();
+      expect(screen.getByText(/showing 1 contact heard in the last 3 days/i)).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -201,7 +226,8 @@ describe('MapView', () => {
       favorite: false,
       last_contacted: null,
       last_read_at: null,
-      first_seen: null,is_tracker: false,
+      first_seen: null,
+is_tracker: false,
       tracker_name: null,
     };
     const blocked: Contact = {
@@ -223,7 +249,8 @@ describe('MapView', () => {
       favorite: false,
       last_contacted: null,
       last_read_at: null,
-      first_seen: null,is_tracker: false,
+      first_seen: null,
+is_tracker: false,
       tracker_name: null,
     };
 
@@ -253,7 +280,8 @@ describe('MapView', () => {
       favorite: false,
       last_contacted: null,
       last_read_at: null,
-      first_seen: null,is_tracker: false,
+      first_seen: null,
+is_tracker: false,
       tracker_name: null,
     };
     const blocked: Contact = {
@@ -275,7 +303,8 @@ describe('MapView', () => {
       favorite: false,
       last_contacted: null,
       last_read_at: null,
-      first_seen: null,is_tracker: false,
+      first_seen: null,
+is_tracker: false,
       tracker_name: null,
     };
 
@@ -305,7 +334,8 @@ describe('MapView', () => {
       favorite: false,
       last_contacted: null,
       last_read_at: null,
-      first_seen: null,is_tracker: false,
+      first_seen: null,
+is_tracker: false,
       tracker_name: null,
     };
     const blocked: Contact = {
@@ -327,7 +357,8 @@ describe('MapView', () => {
       favorite: false,
       last_contacted: null,
       last_read_at: null,
-      first_seen: null,is_tracker: false,
+      first_seen: null,
+is_tracker: false,
       tracker_name: null,
     };
 

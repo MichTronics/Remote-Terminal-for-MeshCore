@@ -2,7 +2,6 @@ import { Fragment, useEffect, useState, useMemo, useRef, useCallback } from 'rea
 import {
   MapContainer,
   TileLayer,
-  CircleMarker,
   Marker,
   Popup,
   useMap,
@@ -10,14 +9,14 @@ import {
   Polyline,
   LayersControl,
 } from 'react-leaflet';
-import type { LatLngBoundsExpression, CircleMarker as LeafletCircleMarker } from 'leaflet';
+import type { LatLngBoundsExpression } from 'leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Contact, LocationHistory, RadioConfig, RawPacket } from '../types';
 import { api } from '../api';
 import { formatTime } from '../utils/messageParser';
 import { isValidLocation } from '../utils/pathUtils';
-import { CONTACT_TYPE_REPEATER } from '../types';
+import { CONTACT_TYPE_REPEATER, CONTACT_TYPE_ROOM } from '../types';
 import {
   parsePacket,
   getPacketLabel,
@@ -114,11 +113,10 @@ function getSavedLayerId(): string {
   try {
     const stored = localStorage.getItem(MAP_LAYER_STORAGE_KEY);
     if (stored && TILE_LAYERS.some((l) => l.id === stored)) return stored;
-    // Legacy migration: boolean dark-map flag predates multi-layer support.
-    const legacyDark = localStorage.getItem(LEGACY_DARK_MAP_STORAGE_KEY) === 'true';
-    return legacyDark ? 'dark' : 'light';
+    // Default to dark tiles (CoreScope-style live map).
+    return 'dark';
   } catch {
-    return 'light';
+    return 'dark';
   }
 }
 
@@ -160,36 +158,96 @@ function MaxZoomByActiveLayer({ maxZoom }: { maxZoom: number }) {
   return null;
 }
 
-const MAP_RECENCY_COLORS = {
-  recent: '#06b6d4',
-  today: '#2563eb',
-  stale: '#f59e0b',
-  old: '#64748b',
-} as const;
-const MAP_MARKER_STROKE = '#48b794';
-const MAP_REPEATER_RING = '#ffffff';
+type MapRoleKey = 'repeater' | 'companion' | 'room' | 'sensor' | 'unknown';
+
+/** CoreScope Wong palette — role color is primary, not recency. */
+const MAP_ROLE_COLORS: Record<MapRoleKey, string> = {
+  repeater: '#D55E00',
+  companion: '#56B4E9',
+  room: '#009E73',
+  sensor: '#F0E442',
+  unknown: '#6b7280',
+};
+
+const MAP_ROLE_RADIUS: Record<MapRoleKey, number> = {
+  repeater: 9,
+  companion: 8,
+  room: 8,
+  sensor: 7,
+  unknown: 7,
+};
+
+const MAP_ROLE_LABELS: Record<MapRoleKey, string> = {
+  repeater: 'Repeater',
+  companion: 'Companion',
+  room: 'Room',
+  sensor: 'Sensor',
+  unknown: 'Unknown',
+};
 
 // --- Packet visualization constants ---
 const THREE_DAYS_SEC = 3 * 24 * 60 * 60;
-const PARTICLE_LIFETIME_MS = 3000;
-const PARTICLE_TAIL_LENGTH = 0.25; // fraction of progress to trail behind
-const PARTICLE_RADIUS = 8;
-const PARTICLE_TAIL_WIDTH = 5;
+const PARTICLE_LIFETIME_MS = 3500;
+const PARTICLE_TAIL_LENGTH = 0.3;
+const PARTICLE_RADIUS = 9;
+const PARTICLE_TAIL_WIDTH = 6;
 const MAX_MAP_PARTICLES = 200;
+const ROUTE_LINE_OPACITY = 0.32;
+const ROUTE_LINE_WEIGHT = 2;
 
 // --- Helpers ---
 
-function getMarkerColor(lastSeen: number | null | undefined): string {
-  if (lastSeen == null) return MAP_RECENCY_COLORS.old;
-  const now = Date.now() / 1000;
-  const age = now - lastSeen;
-  const hour = 3600;
-  const day = 86400;
+function getContactRoleKey(contact: Contact): MapRoleKey {
+  if (contact.type === CONTACT_TYPE_REPEATER) return 'repeater';
+  if (contact.type === CONTACT_TYPE_ROOM) return 'room';
+  if (contact.type === 4) return 'sensor';
+  if (contact.type === 1) return 'companion';
+  return 'unknown';
+}
 
-  if (age < hour) return MAP_RECENCY_COLORS.recent;
-  if (age < day) return MAP_RECENCY_COLORS.today;
-  if (age < 3 * day) return MAP_RECENCY_COLORS.stale;
-  return MAP_RECENCY_COLORS.old;
+function getMarkerStaleOpacity(lastSeen: number | null | undefined): number {
+  if (lastSeen == null) return 0.35;
+  const age = Date.now() / 1000 - lastSeen;
+  if (age < 3600) return 1;
+  if (age < 86400) return 0.85;
+  if (age < 3 * 86400) return 0.6;
+  return 0.4;
+}
+
+function makeRoleMarkerIcon(role: MapRoleKey, opacity: number): L.DivIcon {
+  const color = MAP_ROLE_COLORS[role];
+  const radius = MAP_ROLE_RADIUS[role];
+  const size = radius * 2 + 4;
+  const c = size / 2;
+  const stroke = '#1a1a1a';
+  let inner = '';
+
+  switch (role) {
+    case 'repeater':
+      inner = `<circle cx="${c}" cy="${c}" r="${radius}" fill="${color}" fill-opacity="${opacity}" stroke="${stroke}" stroke-width="2"/>`;
+      break;
+    case 'companion':
+      inner = `<rect x="${c - radius}" y="${c - radius}" width="${radius * 2}" height="${radius * 2}" fill="${color}" fill-opacity="${opacity}" stroke="${stroke}" stroke-width="2"/>`;
+      break;
+    case 'room': {
+      const d = radius;
+      inner = `<polygon points="${c},${c - d} ${c + d},${c} ${c},${c + d} ${c - d},${c}" fill="${color}" fill-opacity="${opacity}" stroke="${stroke}" stroke-width="2"/>`;
+      break;
+    }
+    case 'sensor':
+      inner = `<polygon points="${c},${c - radius} ${c + radius},${c + radius} ${c - radius},${c + radius}" fill="${color}" fill-opacity="${opacity}" stroke="${stroke}" stroke-width="2"/>`;
+      break;
+    default:
+      inner = `<circle cx="${c}" cy="${c}" r="${radius - 1}" fill="${color}" fill-opacity="${opacity}" stroke="${stroke}" stroke-width="2" stroke-dasharray="3 2"/>`;
+  }
+
+  return L.divIcon({
+    html: `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">${inner}</svg>`,
+    className: 'mesh-role-marker',
+    iconSize: [size, size],
+    iconAnchor: [c, c],
+    popupAnchor: [0, -radius],
+  });
 }
 
 /** Resolve a hop token to a single contact with GPS, or null. */
@@ -534,7 +592,7 @@ export function MapView({
     }
   }, []);
 
-  const [showPackets, setShowPackets] = useState(false);
+  const [showPackets, setShowPackets] = useState(true);
   const [discoveryMode, setDiscoveryMode] = useState(false);
   const [discoveredKeys, setDiscoveredKeys] = useState<Set<string>>(new Set());
   const [particles, setParticles] = useState<MapParticle[]>([]);
@@ -801,9 +859,9 @@ export function MapView({
       focusedContact.last_seen <= (showPackets ? threeDaysAgoSec : sevenDaysAgo));
 
   // Track marker refs to open popup programmatically
-  const markerRefs = useRef<Record<string, LeafletCircleMarker | null>>({});
+  const markerRefs = useRef<Record<string, L.Marker | null>>({});
 
-  const setMarkerRef = useCallback((key: string, ref: LeafletCircleMarker | null) => {
+  const setMarkerRef = useCallback((key: string, ref: L.Marker | null) => {
     if (ref === null) {
       delete markerRefs.current[key];
       return;
@@ -857,47 +915,31 @@ export function MapView({
       <div className="px-4 py-2 bg-muted/50 text-xs text-muted-foreground flex flex-col gap-1 md:flex-row md:items-center md:justify-between md:gap-3">
         <span>{infoLabel}</span>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 md:justify-end">
-          {!showPackets && (
-            <>
-              <span className="flex items-center gap-1">
-                <span
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: MAP_RECENCY_COLORS.recent }}
-                  aria-hidden="true"
-                />{' '}
-                &lt;1h
-              </span>
-              <span className="flex items-center gap-1">
-                <span
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: MAP_RECENCY_COLORS.today }}
-                  aria-hidden="true"
-                />{' '}
-                &lt;1d
-              </span>
-              <span className="flex items-center gap-1">
-                <span
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: MAP_RECENCY_COLORS.stale }}
-                  aria-hidden="true"
-                />{' '}
-                &lt;3d
-              </span>
-              <span className="flex items-center gap-1">
-                <span
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: MAP_RECENCY_COLORS.old }}
-                  aria-hidden="true"
-                />{' '}
-                older
-              </span>
-            </>
-          )}
+          {(Object.keys(MAP_ROLE_COLORS) as MapRoleKey[]).map((role) => (
+            <span key={role} className="flex items-center gap-1">
+              <span
+                className="inline-block h-3 w-3 shrink-0"
+                style={{
+                  backgroundColor: MAP_ROLE_COLORS[role],
+                  borderRadius: role === 'repeater' || role === 'unknown' ? '9999px' : '1px',
+                  clipPath:
+                    role === 'room'
+                      ? 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)'
+                      : role === 'sensor'
+                        ? 'polygon(50% 0%, 0% 100%, 100% 100%)'
+                        : undefined,
+                }}
+                aria-hidden="true"
+              />
+              {MAP_ROLE_LABELS[role]}
+            </span>
+          ))}
           {showPackets && (
             <>
+              <span className="hidden sm:inline text-muted-foreground/60">|</span>
               <span className="flex items-center gap-1">
                 <span
-                  className="w-2 h-2 rounded-full"
+                  className="h-2 w-2 rounded-full"
                   style={{ backgroundColor: PARTICLE_COLOR_MAP['AD'] }}
                   aria-hidden="true"
                 />
@@ -905,7 +947,7 @@ export function MapView({
               </span>
               <span className="flex items-center gap-1">
                 <span
-                  className="w-2 h-2 rounded-full"
+                  className="h-2 w-2 rounded-full"
                   style={{ backgroundColor: PARTICLE_COLOR_MAP['GT'] }}
                   aria-hidden="true"
                 />
@@ -913,7 +955,7 @@ export function MapView({
               </span>
               <span className="flex items-center gap-1">
                 <span
-                  className="w-2 h-2 rounded-full"
+                  className="h-2 w-2 rounded-full"
                   style={{ backgroundColor: PARTICLE_COLOR_MAP['DM'] }}
                   aria-hidden="true"
                 />
@@ -921,7 +963,7 @@ export function MapView({
               </span>
               <span className="flex items-center gap-1">
                 <span
-                  className="w-2 h-2 rounded-full"
+                  className="h-2 w-2 rounded-full"
                   style={{ backgroundColor: PARTICLE_COLOR_MAP['ACK'] }}
                   aria-hidden="true"
                 />
@@ -929,14 +971,6 @@ export function MapView({
               </span>
             </>
           )}
-          <span className="flex items-center gap-1">
-            <span
-              className="w-3 h-3 rounded-full border-2"
-              style={{ borderColor: MAP_REPEATER_RING, backgroundColor: MAP_RECENCY_COLORS.today }}
-              aria-hidden="true"
-            />{' '}
-            repeater
-          </span>
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input
               type="checkbox"
@@ -944,7 +978,7 @@ export function MapView({
               onChange={(e) => setShowPackets(e.target.checked)}
               className="rounded border-border"
             />
-            <span className="text-[0.6875rem]">Visualize packets</span>
+            <span className="text-[0.6875rem]">Live traffic</span>
           </label>
           {showPackets && (
             <label className="flex items-center gap-1.5 cursor-pointer">
@@ -1009,7 +1043,13 @@ export function MapView({
               <Polyline
                 key={i}
                 positions={line.path}
-                pathOptions={{ color: line.color, weight: 1, opacity: 0.15, dashArray: '4 6' }}
+                pathOptions={{
+                  color: line.color,
+                  weight: ROUTE_LINE_WEIGHT,
+                  opacity: ROUTE_LINE_OPACITY,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
               />
             ))}
 
@@ -1032,15 +1072,14 @@ export function MapView({
           {mappableContacts.map((contact) => {
             const isRepeater = contact.type === CONTACT_TYPE_REPEATER;
             const isTracker = contact.is_tracker;
-            const color = getMarkerColor(contact.last_seen);
+            const roleKey = getContactRoleKey(contact);
+            const markerOpacity = getMarkerStaleOpacity(contact.last_seen);
             const displayName = contact.name || contact.public_key.slice(0, 12);
             const lastHeardLabel =
               contact.last_seen != null
                 ? formatTime(contact.last_seen)
                 : 'Never heard by this server';
-            const radius = isRepeater ? 7 : 6;
 
-            // Custom icon for trackers
             const trackerIcon = isTracker
               ? L.divIcon({
                   html: '<div style="font-size: 24px; line-height: 1; text-align: center; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">🚗</div>',
@@ -1050,6 +1089,7 @@ export function MapView({
                   popupAnchor: [0, -16],
                 })
               : undefined;
+            const roleIcon = makeRoleMarkerIcon(roleKey, markerOpacity);
 
             const markerContent = (
               <Popup>
@@ -1091,30 +1131,13 @@ export function MapView({
 
             return (
               <Fragment key={contact.public_key}>
-                {isTracker ? (
-                  <Marker
-                    key={contact.public_key}
-                    position={[contact.lat!, contact.lon!]}
-                    icon={trackerIcon!}
-                  >
-                    {markerContent}
-                  </Marker>
-                ) : (
-                  <CircleMarker
-                    key={contact.public_key}
-                    ref={(ref) => setMarkerRef(contact.public_key, ref)}
-                    center={[contact.lat!, contact.lon!]}
-                    radius={radius}
-                    pathOptions={{
-                      color: isRepeater ? MAP_REPEATER_RING : MAP_MARKER_STROKE,
-                      fillColor: color,
-                      fillOpacity: 0.9,
-                      weight: 2, // isRepeater ? 2 : 2,
-                    }}
-                  >
-                    {markerContent}
-                  </CircleMarker>
-                )}
+                <Marker
+                  ref={(ref) => setMarkerRef(contact.public_key, ref)}
+                  position={[contact.lat!, contact.lon!]}
+                  icon={isTracker ? trackerIcon! : roleIcon}
+                >
+                  {markerContent}
+                </Marker>
               </Fragment>
             );
           })}

@@ -157,7 +157,7 @@ export function MapLivePacketFeed({ packets, contacts, channels, visible }: MapL
     <div
       ref={containerRef}
       className={cn(
-        'absolute z-[500] w-[28rem] max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 shadow-lg backdrop-blur-sm pointer-events-auto',
+        'absolute z-[500] w-[32em] max-w-[calc(100%-1.5rem)] rounded-md border border-border/70 bg-background/90 shadow-lg backdrop-blur-sm pointer-events-auto',
         dragging && 'select-none'
       )}
       style={{ left: position.x, top: position.y }}

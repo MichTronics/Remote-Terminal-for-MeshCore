@@ -29,6 +29,7 @@ import {
 import { getContrastTextColor, type LocalLabel } from '../utils/localLabel';
 import type { CrackerPanelProps } from './CrackerPanel';
 import type { SearchViewProps } from './SearchView';
+import type { NodeSearchViewProps } from './NodeSearchView';
 import type { SettingsModalProps } from './SettingsModal';
 import { cn } from '@/lib/utils';
 
@@ -39,6 +40,9 @@ const CrackerPanel = lazy(() =>
   import('./CrackerPanel').then((m) => ({ default: m.CrackerPanel }))
 );
 const SearchView = lazy(() => import('./SearchView').then((m) => ({ default: m.SearchView })));
+const NodeSearchView = lazy(() =>
+  import('./NodeSearchView').then((m) => ({ default: m.NodeSearchView }))
+);
 
 type SidebarProps = ComponentProps<typeof Sidebar>;
 type ConversationPaneProps = ComponentProps<typeof ConversationPane>;
@@ -71,6 +75,7 @@ interface AppShellProps {
   sidebarProps: SidebarProps;
   conversationPaneProps: ConversationPaneProps;
   searchProps: SearchViewProps;
+  nodeSearchProps: NodeSearchViewProps;
   settingsProps: Omit<
     SettingsModalProps,
     'open' | 'pageMode' | 'externalSidebarNav' | 'desktopSection' | 'onClose' | 'onLocalLabelChange'
@@ -104,6 +109,7 @@ export function AppShell({
   sidebarProps,
   conversationPaneProps,
   searchProps,
+  nodeSearchProps,
   settingsProps,
   crackerProps,
   newMessageModalProps,
@@ -141,6 +147,11 @@ export function AppShell({
   const searchMounted = useRef(false);
   if (conversationPaneProps.activeConversation?.type === 'search') {
     searchMounted.current = true;
+  }
+
+  const nodeSearchMounted = useRef(false);
+  if (conversationPaneProps.activeConversation?.type === 'node-search') {
+    nodeSearchMounted.current = true;
   }
 
   const crackerMounted = useRef(false);
@@ -276,7 +287,9 @@ export function AppShell({
           <div
             className={cn(
               'flex-1 flex flex-col min-h-0',
-              (showSettings || conversationPaneProps.activeConversation?.type === 'search') &&
+              (showSettings ||
+                conversationPaneProps.activeConversation?.type === 'search' ||
+                conversationPaneProps.activeConversation?.type === 'node-search') &&
                 'hidden'
             )}
           >
@@ -299,6 +312,26 @@ export function AppShell({
                 }
               >
                 <SearchView {...searchProps} />
+              </Suspense>
+            </div>
+          )}
+
+          {nodeSearchMounted.current && (
+            <div
+              className={cn(
+                'flex-1 flex flex-col min-h-0',
+                (conversationPaneProps.activeConversation?.type !== 'node-search' || showSettings) &&
+                  'hidden'
+              )}
+            >
+              <Suspense
+                fallback={
+                  <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                    Loading node search...
+                  </div>
+                }
+              >
+                <NodeSearchView {...nodeSearchProps} />
               </Suspense>
             </div>
           )}

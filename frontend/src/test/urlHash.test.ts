@@ -60,6 +60,22 @@ describe('parseHashConversation', () => {
     expect(result).toEqual({ type: 'trace', name: 'trace' });
   });
 
+  it('parses #search as search type', () => {
+    window.location.hash = '#search';
+
+    const result = parseHashConversation();
+
+    expect(result).toEqual({ type: 'search', name: 'search' });
+  });
+
+  it('parses #node-search as node-search type', () => {
+    window.location.hash = '#node-search';
+
+    const result = parseHashConversation();
+
+    expect(result).toEqual({ type: 'node-search', name: 'node-search' });
+  });
+
   it('parses #map/focus/PUBKEY with focus key', () => {
     window.location.hash = '#map/focus/ABCD1234';
 

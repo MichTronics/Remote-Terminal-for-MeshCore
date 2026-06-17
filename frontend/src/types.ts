@@ -430,6 +430,7 @@ type ConversationType =
   | 'map'
   | 'visualizer'
   | 'search'
+  | 'node-search'
   | 'trace'
   | 'spam';
 

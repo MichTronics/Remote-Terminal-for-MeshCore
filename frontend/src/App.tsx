@@ -29,6 +29,7 @@ import type {
   BulkCreateHashtagChannelsResult,
   BulkHashtagChannelInput,
   Channel,
+  Contact,
   Conversation,
   Message,
   RawPacket,
@@ -37,6 +38,7 @@ import type {
 } from './types';
 import { CONTACT_TYPE_REPEATER, CONTACT_TYPE_ROOM } from './types';
 import { shouldAutoFocusInput } from './utils/autoFocusInput';
+import { getContactDisplayName } from './utils/pubkey';
 
 interface ChannelUnreadMarker {
   channelId: string;
@@ -707,6 +709,23 @@ export function App() {
     onNavigateToMessage: handleNavigateToMessage,
     prefillRequest: searchPrefillRequest,
   };
+  const handleNodeSearchSelect = useCallback(
+    (contact: Contact) => {
+      handleSelectConversationWithTargetReset({
+        type: 'contact',
+        id: contact.public_key,
+        name: getContactDisplayName(contact.name, contact.public_key, contact.last_advert),
+      });
+    },
+    [handleSelectConversationWithTargetReset]
+  );
+  const nodeSearchProps = {
+    contacts,
+    blockedKeys: appSettings?.blocked_keys,
+    blockedNames: appSettings?.blocked_names,
+    visibilityVersion,
+    onSelectContact: handleNodeSearchSelect,
+  };
   const settingsProps = {
     config,
     health,
@@ -832,6 +851,7 @@ export function App() {
         sidebarProps={sidebarProps}
         conversationPaneProps={conversationPaneProps}
         searchProps={searchProps}
+        nodeSearchProps={nodeSearchProps}
         settingsProps={settingsProps}
         crackerProps={crackerProps}
         newMessageModalProps={newMessageModalProps}

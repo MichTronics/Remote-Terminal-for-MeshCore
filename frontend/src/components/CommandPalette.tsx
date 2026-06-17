@@ -9,6 +9,7 @@ import {
   Search,
   Star,
   User,
+  UserSearch,
   Waypoints,
 } from 'lucide-react';
 
@@ -59,7 +60,7 @@ interface ToolItem extends Searchable {
   id: string;
   name: string;
   icon: React.ComponentType<{ className?: string }>;
-  type: 'raw' | 'map' | 'visualizer' | 'search' | 'trace';
+  type: 'raw' | 'map' | 'visualizer' | 'search' | 'node-search' | 'trace';
 }
 
 interface SettingItem extends Searchable {
@@ -84,6 +85,13 @@ const TOOL_ITEMS: ToolItem[] = [
     icon: Search,
     type: 'search',
     searchText: 'message search',
+  },
+  {
+    id: 'node-search',
+    name: 'Node Search',
+    icon: UserSearch,
+    type: 'node-search',
+    searchText: 'node search contacts',
   },
   { id: 'trace', name: 'Route Trace', icon: Route, type: 'trace', searchText: 'route trace' },
 ];

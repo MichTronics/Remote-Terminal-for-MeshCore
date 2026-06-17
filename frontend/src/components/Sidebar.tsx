@@ -13,6 +13,7 @@ import {
   Map,
   Search as SearchIcon,
   SquarePen,
+  UserSearch,
   X,
 } from 'lucide-react';
 import {
@@ -175,7 +176,16 @@ export function Sidebar({
   };
 
   const isActive = (
-    type: 'contact' | 'channel' | 'raw' | 'map' | 'visualizer' | 'search' | 'trace' | 'spam',
+    type:
+      | 'contact'
+      | 'channel'
+      | 'raw'
+      | 'map'
+      | 'visualizer'
+      | 'search'
+      | 'node-search'
+      | 'trace'
+      | 'spam',
     id: string
   ) => activeConversation?.type === type && activeConversation?.id === id;
 
@@ -760,6 +770,18 @@ export function Sidebar({
               type: 'search',
               id: 'search',
               name: 'Message Search',
+            }),
+        }),
+        renderSidebarActionRow({
+          key: 'tool-node-search',
+          active: isActive('node-search', 'node-search'),
+          icon: <UserSearch className="h-4 w-4" />,
+          label: 'Node Search',
+          onClick: () =>
+            handleSelectConversation({
+              type: 'node-search',
+              id: 'node-search',
+              name: 'Node Search',
             }),
         }),
         renderSidebarActionRow({

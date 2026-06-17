@@ -268,7 +268,7 @@ export function ConversationPane({
     );
   }
 
-  if (activeConversation.type === 'search') {
+  if (activeConversation.type === 'search' || activeConversation.type === 'node-search') {
     return null;
   }
 

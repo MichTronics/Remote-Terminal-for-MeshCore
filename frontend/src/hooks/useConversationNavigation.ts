@@ -60,7 +60,7 @@ export function useConversationNavigation({
 
   const handleSelectConversationWithTargetReset = useCallback(
     (conv: Conversation, options?: { preserveTarget?: boolean }) => {
-      if (conv.type !== 'search' && !options?.preserveTarget) {
+      if (conv.type !== 'search' && conv.type !== 'node-search' && !options?.preserveTarget) {
         setTargetMessageId(null);
       }
       handleSelectConversation(conv);

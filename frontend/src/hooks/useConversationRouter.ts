@@ -33,6 +33,8 @@ function resolveConversationFromHash(
       return { type: 'visualizer', id: 'visualizer', name: 'Mesh Visualizer' };
     case 'search':
       return { type: 'search', id: 'search', name: 'Message Search' };
+    case 'node-search':
+      return { type: 'node-search', id: 'node-search', name: 'Node Search' };
     case 'trace':
       return { type: 'trace', id: 'trace', name: 'Trace' };
     case 'spam':
@@ -140,6 +142,11 @@ export function useConversationRouter({
     }
     if (hashConv?.type === 'search') {
       setActiveConversationState({ type: 'search', id: 'search', name: 'Message Search' });
+      hasSetDefaultConversation.current = true;
+      return;
+    }
+    if (hashConv?.type === 'node-search') {
+      setActiveConversationState({ type: 'node-search', id: 'node-search', name: 'Node Search' });
       hasSetDefaultConversation.current = true;
       return;
     }
@@ -301,7 +308,11 @@ export function useConversationRouter({
         }
       }
     }
-    if (activeConversation && activeConversation.type !== 'search') {
+    if (
+      activeConversation &&
+      activeConversation.type !== 'search' &&
+      activeConversation.type !== 'node-search'
+    ) {
       saveLastViewedConversation(activeConversation);
     }
   }, [activeConversation, suspendHashSync]);

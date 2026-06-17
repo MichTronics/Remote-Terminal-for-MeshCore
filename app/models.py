@@ -540,6 +540,17 @@ class SpamRepeaterStat(BaseModel):
         description="Times this hop was last in the stored path; often closest to this radio"
     )
     middle_count: int = Field(description="Times this hop appeared between the path ends")
+    suspect_score: float = Field(
+        default=0.0,
+        description="0-1 score combining path position, source-side ratio, and prefix concentration",
+    )
+    narrowed_prefix: str = Field(
+        default="",
+        description="Most common shared path prefix ending at this hop",
+    )
+    contact_name: str | None = Field(default=None, description="Resolved repeater name when known")
+    lat: float | None = Field(default=None, description="Resolved latitude when available")
+    lon: float | None = Field(default=None, description="Resolved longitude when available")
     first_seen: int | None = Field(description="First route observation timestamp")
     last_seen: int | None = Field(description="Most recent route observation timestamp")
     avg_rssi: float | None = Field(default=None, description="Average RSSI in dBm")
@@ -569,6 +580,44 @@ class SpamFloodCluster(BaseModel):
     packet_count: int = Field(description="Packets in this cluster during the live window")
     dominant_route: str = Field(description="Most common RF-only route label for this cluster")
     hop_tokens: list[str] = Field(description="Hop tokens for the dominant RF-only route")
+    refined_route: str = Field(
+        default="",
+        description="Progressively narrowed shared-prefix route for this cluster",
+    )
+    refined_hop_tokens: list[str] = Field(
+        default_factory=list,
+        description="Hop tokens for the narrowed hotspot prefix",
+    )
+    traffic_share: float = Field(
+        default=0.0,
+        description="Fraction of episode packets sharing the refined prefix",
+    )
+    concentration: float = Field(
+        default=1.0,
+        description="How much traffic concentrates when deepening from parent prefix to refined prefix",
+    )
+    narrowing_depth: int = Field(
+        default=1,
+        description="Number of hops in the refined hotspot prefix",
+    )
+    confidence: int = Field(
+        default=0,
+        description="0-100 composite confidence for the narrowed hotspot estimate",
+    )
+    origin_hop: str | None = Field(
+        default=None,
+        description="Source-nearest hop with resolved coordinates in the refined prefix",
+    )
+    origin_name: str | None = Field(default=None, description="Resolved name for origin_hop when known")
+    origin_public_key: str | None = Field(
+        default=None, description="Resolved public key for origin_hop when known"
+    )
+    origin_lat: float | None = Field(
+        default=None, description="Estimated spam-origin latitude from narrowed prefix geo chain"
+    )
+    origin_lon: float | None = Field(
+        default=None, description="Estimated spam-origin longitude from narrowed prefix geo chain"
+    )
     last_seen: int = Field(description="Unix timestamp of the newest packet in this cluster")
 
 
@@ -594,7 +643,47 @@ class SpamLiveStatus(BaseModel):
     detected_at: int | None = Field(
         default=None, description="Unix timestamp when the current flood episode started"
     )
+    baseline_packets_per_window: float | None = Field(
+        default=None,
+        description="Historical average DM path observations per trigger window (14-day baseline)",
+    )
+    anomaly_ratio: float | None = Field(
+        default=None,
+        description="Peak window packet count divided by baseline_packets_per_window",
+    )
+    episode_id: int | None = Field(
+        default=None,
+        description="Database ID for the current or most recent persisted flood episode",
+    )
     clusters: list[SpamFloodCluster] = Field(default_factory=list)
+
+
+class SpamFloodEpisode(BaseModel):
+    """Persisted DM flood episode for post-hoc review."""
+
+    id: int
+    started_at: int
+    ended_at: int | None = None
+    duration_secs: int | None = None
+    total_packets: int = 0
+    peak_packets_per_window: int = 0
+    baseline_packets_per_window: float | None = None
+    anomaly_ratio: float | None = None
+    packet_threshold: int
+    window_secs: int
+    primary_entry_hop: str | None = None
+    primary_entry_name: str | None = None
+    primary_origin_hop: str | None = None
+    primary_origin_name: str | None = None
+    primary_origin_lat: float | None = None
+    primary_origin_lon: float | None = None
+    primary_refined_route: str | None = None
+    primary_confidence: int | None = None
+    clusters: list[SpamFloodCluster] = Field(default_factory=list)
+
+
+class SpamFloodEpisodesResponse(BaseModel):
+    episodes: list[SpamFloodEpisode]
 
 
 class ResendChannelMessageResponse(BaseModel):

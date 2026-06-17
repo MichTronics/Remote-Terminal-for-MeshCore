@@ -10,10 +10,12 @@ from app.models import (
     ResendChannelMessageResponse,
     SendChannelMessageRequest,
     SendDirectMessageRequest,
+    SpamFloodEpisodesResponse,
     SpamRouteStatsResponse,
     SpamLiveStatus,
 )
 from app.repository import AmbiguousPublicKeyPrefixError, AppSettingsRepository, MessageRepository
+from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
 from app.services.message_send import (
     resend_channel_message_record,
     send_channel_message_to_channel,
@@ -50,6 +52,15 @@ async def get_spam_route_stats(
 async def get_spam_live_status() -> SpamLiveStatus:
     """Return the current rolling-window DM flood detection status."""
     return await spam_live_tracker.get_live_status()
+
+
+@router.get("/spam/episodes", response_model=SpamFloodEpisodesResponse)
+async def get_spam_flood_episodes(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> SpamFloodEpisodesResponse:
+    """Return persisted DM flood episode history."""
+    episodes = await SpamFloodEpisodeRepository.list_recent(limit=limit)
+    return SpamFloodEpisodesResponse(episodes=episodes)
 
 
 @router.get("/around/{message_id}", response_model=MessagesAroundResponse)

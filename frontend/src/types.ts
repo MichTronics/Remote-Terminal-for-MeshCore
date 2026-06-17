@@ -373,6 +373,11 @@ export interface SpamRepeaterStat {
   source_side_count: number;
   radio_side_count: number;
   middle_count: number;
+  suspect_score: number;
+  narrowed_prefix: string;
+  contact_name: string | null;
+  lat: number | null;
+  lon: number | null;
   first_seen: number | null;
   last_seen: number | null;
   avg_rssi: number | null;
@@ -411,6 +416,17 @@ export interface SpamFloodCluster {
   packet_count: number;
   dominant_route: string;
   hop_tokens: string[];
+  refined_route: string;
+  refined_hop_tokens: string[];
+  traffic_share: number;
+  concentration: number;
+  narrowing_depth: number;
+  confidence: number;
+  origin_hop: string | null;
+  origin_name: string | null;
+  origin_public_key: string | null;
+  origin_lat: number | null;
+  origin_lon: number | null;
   last_seen: number;
 }
 
@@ -422,7 +438,36 @@ export interface SpamLiveStatus {
   episode_packets: number;
   episode_window_secs: number;
   detected_at: number | null;
+  baseline_packets_per_window: number | null;
+  anomaly_ratio: number | null;
+  episode_id: number | null;
   clusters: SpamFloodCluster[];
+}
+
+export interface SpamFloodEpisode {
+  id: number;
+  started_at: number;
+  ended_at: number | null;
+  duration_secs: number | null;
+  total_packets: number;
+  peak_packets_per_window: number;
+  baseline_packets_per_window: number | null;
+  anomaly_ratio: number | null;
+  packet_threshold: number;
+  window_secs: number;
+  primary_entry_hop: string | null;
+  primary_entry_name: string | null;
+  primary_origin_hop: string | null;
+  primary_origin_name: string | null;
+  primary_origin_lat: number | null;
+  primary_origin_lon: number | null;
+  primary_refined_route: string | null;
+  primary_confidence: number | null;
+  clusters: SpamFloodCluster[];
+}
+
+export interface SpamFloodEpisodesResponse {
+  episodes: SpamFloodEpisode[];
 }
 
 type ConversationType =

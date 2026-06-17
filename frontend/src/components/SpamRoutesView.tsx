@@ -4,9 +4,9 @@ import { AlertTriangle, Crosshair, ExternalLink, MapPin, RadioTower, RefreshCw, 
 import { api } from '../api';
 import type {
   SpamFloodCluster,
+  SpamFloodEpisode,
   SpamLiveStatus,
   SpamRepeaterStat,
-  SpamRouteStat,
   SpamRouteStatsResponse,
 } from '../types';
 import { Button } from './ui/button';
@@ -35,14 +35,30 @@ function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function sourceRatio(item: SpamRepeaterStat): number {
-  if (item.observation_count <= 0) return 0;
-  return item.source_side_count / item.observation_count;
+function suspectScore(item: SpamRepeaterStat): number {
+  return item.suspect_score ?? 0;
 }
 
-function getRoutePreview(routes: SpamRouteStat[], hop: string): string {
-  const route = routes.find((item) => item.hop_tokens[0] === hop);
-  return route?.route ?? '-';
+function formatHopLabel(item: SpamRepeaterStat): string {
+  if (item.contact_name) return item.contact_name;
+  return item.hop;
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds == null || seconds <= 0) return '-';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+function formatHotspotLabel(episode: SpamFloodEpisode): string {
+  const name = episode.primary_origin_name ?? episode.primary_entry_name;
+  const hop = episode.primary_origin_hop ?? episode.primary_entry_hop;
+  if (name && hop) return `${name} (${hop})`;
+  if (hop) return hop;
+  return '-';
 }
 
 function buildMapUrl(lat: number, lon: number): string {
@@ -60,6 +76,8 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
   const [localLiveStatus, setLocalLiveStatus] = useState<SpamLiveStatus | null>(liveStatus ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [episodes, setEpisodes] = useState<SpamFloodEpisode[]>([]);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
@@ -90,6 +108,25 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
 
   useEffect(() => {
     let cancelled = false;
+    setEpisodesLoading(true);
+    api
+      .getSpamFloodEpisodes({ limit: 50 })
+      .then((result) => {
+        if (!cancelled) setEpisodes(result.episodes);
+      })
+      .catch((err) => {
+        if (!cancelled) console.error(err);
+      })
+      .finally(() => {
+        if (!cancelled) setEpisodesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
 
     const refreshLive = () => {
       api
@@ -98,6 +135,15 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
           if (cancelled) return;
           setLocalLiveStatus(status);
           onLiveStatusChange?.(status);
+        })
+        .catch((err) => {
+          if (!cancelled) console.error(err);
+        });
+
+      api
+        .getSpamFloodEpisodes({ limit: 50 })
+        .then((result) => {
+          if (!cancelled) setEpisodes(result.episodes);
         })
         .catch((err) => {
           if (!cancelled) console.error(err);
@@ -112,29 +158,16 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
     };
   }, [onLiveStatusChange]);
 
-  const sourceSideMax = useMemo(
-    () => Math.max(1, ...(data?.repeaters.map((item) => item.source_side_count) ?? [0])),
-    [data]
-  );
   const topSourceCandidates = useMemo(() => {
-    const routes = data?.routes ?? [];
     return [...(data?.repeaters ?? [])]
-      .filter((item) => item.source_side_count > 0)
+      .filter((item) => suspectScore(item) > 0)
       .sort((a, b) => {
-        const sourceDelta = b.source_side_count - a.source_side_count;
-        if (sourceDelta !== 0) return sourceDelta;
-        const ratioDelta = sourceRatio(b) - sourceRatio(a);
-        if (ratioDelta !== 0) return ratioDelta;
+        const suspectDelta = suspectScore(b) - suspectScore(a);
+        if (suspectDelta !== 0) return suspectDelta;
         return (b.last_seen ?? 0) - (a.last_seen ?? 0);
       })
-      .slice(0, 5)
-      .map((item) => ({
-        ...item,
-        sourceRatio: sourceRatio(item),
-        routePreview: getRoutePreview(routes, item.hop),
-      }));
+      .slice(0, 5);
   }, [data]);
-  const topRoute = data?.routes[0];
   const live = localLiveStatus;
 
   return (
@@ -184,10 +217,12 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
 
         <LiveFloodSection live={live} />
 
+        <FloodEpisodeLogSection episodes={episodes} loading={episodesLoading} />
+
         <div className="grid gap-3 sm:grid-cols-3">
           <Metric
             icon={<Crosshair className="h-4 w-4" aria-hidden="true" />}
-            label="Source Candidates"
+            label="Hotspot Candidates"
             value={topSourceCandidates.length}
           />
           <Metric
@@ -203,46 +238,65 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
         </div>
 
         <section className="space-y-2">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <h3 className="text-sm font-semibold">Likely Closest To Source</h3>
-            {topRoute && (
-              <div className="max-w-full truncate text-xs text-muted-foreground">
-                Top route: <span className="font-mono text-foreground">{topRoute.route}</span>
-              </div>
-            )}
+          <div>
+            <h3 className="text-sm font-semibold">Narrowed Hotspot Candidates</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Historical ranking from suspect score: path position, shared-prefix concentration, and
+              source-side frequency in the selected window.
+            </p>
           </div>
           <div className="grid gap-2 lg:grid-cols-5">
-            {topSourceCandidates.map((item, index) => (
-              <div key={item.hop} className="rounded-md border border-border bg-muted/15 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="font-mono text-lg font-semibold">{item.hop}</div>
-                  <div className="rounded bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
-                    #{index + 1}
+            {topSourceCandidates.map((item, index) => {
+              const hasCoords = item.lat != null && item.lon != null;
+              return (
+                <div key={item.hop} className="rounded-md border border-border bg-muted/15 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-medium">{formatHopLabel(item)}</div>
+                      <div className="font-mono text-xs text-muted-foreground">{item.hop}</div>
+                    </div>
+                    <div className="rounded bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                      #{index + 1}
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2 text-xs">
+                    <StatBar
+                      label="Suspect score"
+                      value={formatPercent(suspectScore(item))}
+                      width={suspectScore(item)}
+                    />
+                    <div>
+                      <div className="text-muted-foreground">Narrowed prefix</div>
+                      <div
+                        className="mt-0.5 truncate font-mono text-foreground"
+                        title={item.narrowed_prefix || item.hop}
+                      >
+                        {item.narrowed_prefix || item.hop}
+                      </div>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Path uses</span>
+                      <span className="font-medium tabular-nums">{item.observation_count}</span>
+                    </div>
+                    {hasCoords && (
+                      <a
+                        href={buildMapUrl(item.lat!, item.lon!)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        <MapPin className="h-3 w-3" aria-hidden="true" />
+                        Open map
+                        <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                      </a>
+                    )}
                   </div>
                 </div>
-                <div className="mt-3 space-y-2 text-xs">
-                  <StatBar
-                    label="Source ratio"
-                    value={formatPercent(item.sourceRatio)}
-                    width={item.sourceRatio}
-                  />
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Source hits</span>
-                    <span className="font-medium tabular-nums">{item.source_side_count}</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Total uses</span>
-                    <span className="font-medium tabular-nums">{item.observation_count}</span>
-                  </div>
-                  <div className="truncate font-mono text-muted-foreground" title={item.routePreview}>
-                    {item.routePreview}
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {!loading && topSourceCandidates.length === 0 && (
               <div className="rounded-md border border-border px-3 py-6 text-center text-sm text-muted-foreground lg:col-span-5">
-                No source-side hops found in this window.
+                No hotspot candidates found in this window.
               </div>
             )}
             {loading && (
@@ -253,18 +307,31 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
           </div>
         </section>
 
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold">Hop Position Breakdown</h3>
-          <div className="overflow-x-auto rounded-md border border-border">
+        <details className="group rounded-md border border-border">
+          <summary className="cursor-pointer list-none px-3 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold">Hop Forensics</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Advanced drill-down for RF debugging. Middle/radio-side counts show whether a hop
+                  acted as relay vs local ingress — not the primary hotspot ranker.
+                </p>
+              </div>
+              <span className="text-xs text-muted-foreground group-open:hidden">Show</span>
+              <span className="hidden text-xs text-muted-foreground group-open:inline">Hide</span>
+            </div>
+          </summary>
+          <div className="overflow-x-auto border-t border-border">
             <table className="w-full min-w-[900px] text-sm">
               <thead className="bg-muted/60 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left">Hop</th>
-                  <th className="px-3 py-2 text-right">Source Ratio</th>
+                  <th className="px-3 py-2 text-right">Suspect</th>
+                  <th className="px-3 py-2 text-left">Narrowed Prefix</th>
                   <th className="px-3 py-2 text-right">Uses</th>
-                  <th className="px-3 py-2 text-right">Source Side</th>
+                  <th className="px-3 py-2 text-right">Source</th>
                   <th className="px-3 py-2 text-right">Middle</th>
-                  <th className="px-3 py-2 text-right">Radio Side</th>
+                  <th className="px-3 py-2 text-right">Radio</th>
                   <th className="px-3 py-2 text-right">Routes</th>
                   <th className="px-3 py-2 text-right">Last Seen</th>
                   <th className="px-3 py-2 text-right">Avg RSSI</th>
@@ -274,24 +341,16 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
               <tbody className="divide-y divide-border">
                 {data?.repeaters.map((item) => (
                   <tr key={item.hop} className="hover:bg-muted/30">
-                    <td className="px-3 py-2 font-mono font-semibold">{item.hop}</td>
-                    <td className="px-3 py-2 text-right">
-                      <span className="font-medium tabular-nums">{formatPercent(sourceRatio(item))}</span>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{formatHopLabel(item)}</div>
+                      <div className="font-mono text-xs text-muted-foreground">{item.hop}</div>
                     </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className="font-medium tabular-nums">{formatPercent(suspectScore(item))}</span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">{item.narrowed_prefix || '-'}</td>
                     <td className="px-3 py-2 text-right">{item.observation_count}</td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className="h-full bg-primary"
-                            style={{
-                              width: `${Math.max(4, (item.source_side_count / sourceSideMax) * 100)}%`,
-                            }}
-                          />
-                        </div>
-                        <span>{item.source_side_count}</span>
-                      </div>
-                    </td>
+                    <td className="px-3 py-2 text-right">{item.source_side_count}</td>
                     <td className="px-3 py-2 text-right">{item.middle_count}</td>
                     <td className="px-3 py-2 text-right">{item.radio_side_count}</td>
                     <td className="px-3 py-2 text-right">{item.route_count}</td>
@@ -302,14 +361,14 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
                 ))}
                 {!loading && data?.repeaters.length === 0 && (
                   <tr>
-                    <td className="px-3 py-6 text-center text-muted-foreground" colSpan={10}>
+                    <td className="px-3 py-6 text-center text-muted-foreground" colSpan={11}>
                       No direct-message paths found in this window.
                     </td>
                   </tr>
                 )}
                 {loading && (
                   <tr>
-                    <td className="px-3 py-6 text-center text-muted-foreground" colSpan={10}>
+                    <td className="px-3 py-6 text-center text-muted-foreground" colSpan={11}>
                       Loading...
                     </td>
                   </tr>
@@ -317,7 +376,7 @@ export function SpamRoutesView({ liveStatus, onLiveStatusChange }: SpamRoutesVie
               </tbody>
             </table>
           </div>
-        </section>
+        </details>
 
         <section className="space-y-2">
           <h3 className="text-sm font-semibold">Most Used Full Routes</h3>
@@ -393,6 +452,10 @@ function LiveFloodSection({ live }: { live: SpamLiveStatus | null }) {
                 : `${live.total_packets} packets`}
               {' · '}
               {live.total_packets} in last {live.window_secs}s
+              {live.baseline_packets_per_window != null
+                ? ` · baseline ${live.baseline_packets_per_window.toFixed(1)}/${live.window_secs}s`
+                : ''}
+              {live.anomaly_ratio != null ? ` · ${live.anomaly_ratio.toFixed(1)}x normal` : ''}
               {live.detected_at != null ? ` · since ${formatSeen(live.detected_at)}` : ''}
               {live.total_packets < live.packet_threshold ? ' · hold active' : ''}
             </p>
@@ -419,17 +482,37 @@ function LiveFloodSection({ live }: { live: SpamLiveStatus | null }) {
 }
 
 function LiveHotspotCard({ cluster, index }: { cluster: SpamFloodCluster; index: number }) {
-  const hasCoords = cluster.lat != null && cluster.lon != null;
+  const hasIngressCoords = cluster.lat != null && cluster.lon != null;
+  const hasOriginCoords = cluster.origin_lat != null && cluster.origin_lon != null;
+  const showRefinedRoute =
+    cluster.refined_route &&
+    cluster.refined_route !== cluster.dominant_route &&
+    cluster.narrowing_depth > 1;
 
   return (
     <div className="rounded-md border border-destructive/30 bg-background/80 p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-semibold">Attack Hotspot #{index + 1}</div>
-        <div className="rounded bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive">
-          {cluster.packet_count} pkts
+        <div className="flex items-center gap-2">
+          {cluster.confidence > 0 && (
+            <div className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              {cluster.confidence}% conf
+            </div>
+          )}
+          <div className="rounded bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive">
+            {cluster.packet_count} pkts
+          </div>
         </div>
       </div>
       <div className="mt-3 space-y-2 text-xs">
+        {showRefinedRoute && (
+          <div>
+            <div className="text-muted-foreground">
+              Narrowed hotspot ({cluster.narrowing_depth} hops · {formatPercent(cluster.traffic_share)} share)
+            </div>
+            <div className="mt-0.5 font-mono text-sm text-destructive">{cluster.refined_route}</div>
+          </div>
+        )}
         <div>
           <div className="text-muted-foreground">RF ingress path</div>
           <div className="mt-0.5 font-mono text-sm">{cluster.dominant_route}</div>
@@ -441,7 +524,33 @@ function LiveHotspotCard({ cluster, index }: { cluster: SpamFloodCluster; index:
             <span className="ml-2 font-mono text-muted-foreground">{cluster.entry_hop}</span>
           </div>
         </div>
-        {hasCoords && (
+        {cluster.origin_hop && (
+          <div>
+            <div className="text-muted-foreground">Estimated source-side hop</div>
+            <div className="mt-0.5 font-medium">
+              {cluster.origin_name ?? `[${cluster.origin_hop}]`}
+              <span className="ml-2 font-mono text-muted-foreground">{cluster.origin_hop}</span>
+            </div>
+          </div>
+        )}
+        {hasOriginCoords && (
+          <div className="flex flex-wrap items-center gap-2">
+            <MapPin className="h-3.5 w-3.5 text-destructive" aria-hidden="true" />
+            <span className="font-mono tabular-nums">
+              {cluster.origin_lat!.toFixed(5)}, {cluster.origin_lon!.toFixed(5)}
+            </span>
+            <a
+              href={buildMapUrl(cluster.origin_lat!, cluster.origin_lon!)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-primary hover:underline"
+            >
+              Origin map
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          </div>
+        )}
+        {!hasOriginCoords && hasIngressCoords && (
           <div className="flex flex-wrap items-center gap-2">
             <MapPin className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
             <span className="font-mono tabular-nums">
@@ -453,7 +562,7 @@ function LiveHotspotCard({ cluster, index }: { cluster: SpamFloodCluster; index:
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-primary hover:underline"
             >
-              Open map
+              Ingress map
               <ExternalLink className="h-3 w-3" aria-hidden="true" />
             </a>
           </div>
@@ -461,6 +570,112 @@ function LiveHotspotCard({ cluster, index }: { cluster: SpamFloodCluster; index:
         <div className="text-muted-foreground">Last seen {formatSeen(cluster.last_seen)}</div>
       </div>
     </div>
+  );
+}
+
+function FloodEpisodeLogSection({
+  episodes,
+  loading,
+}: {
+  episodes: SpamFloodEpisode[];
+  loading: boolean;
+}) {
+  return (
+    <section className="space-y-2">
+      <div>
+        <h3 className="text-sm font-semibold">Flood Alert History</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Persisted attack log with 14-day baseline context. Review episodes you may have missed while
+          offline.
+        </p>
+      </div>
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full min-w-[960px] text-sm">
+          <thead className="bg-muted/60 text-xs uppercase text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left">Started</th>
+              <th className="px-3 py-2 text-right">Duration</th>
+              <th className="px-3 py-2 text-right">Packets</th>
+              <th className="px-3 py-2 text-right">Peak / Window</th>
+              <th className="px-3 py-2 text-right">Vs Baseline</th>
+              <th className="px-3 py-2 text-left">Hotspot</th>
+              <th className="px-3 py-2 text-left">Route</th>
+              <th className="px-3 py-2 text-left">Location</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {episodes.map((episode) => {
+              const lat = episode.primary_origin_lat;
+              const lon = episode.primary_origin_lon;
+              const hasCoords = lat != null && lon != null;
+              const inProgress = episode.ended_at == null;
+              return (
+                <tr key={episode.id} className="hover:bg-muted/30">
+                  <td className="px-3 py-2">
+                    <div>{formatSeen(episode.started_at)}</div>
+                    {inProgress && (
+                      <div className="mt-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-destructive">
+                        In progress
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {inProgress ? '…' : formatDuration(episode.duration_secs)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{episode.total_packets}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {episode.peak_packets_per_window}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {episode.anomaly_ratio != null ? `${episode.anomaly_ratio.toFixed(1)}x` : '-'}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{formatHotspotLabel(episode)}</div>
+                    {episode.primary_confidence != null && episode.primary_confidence > 0 && (
+                      <div className="text-xs text-muted-foreground">
+                        {episode.primary_confidence}% confidence
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {episode.primary_refined_route ?? '-'}
+                  </td>
+                  <td className="px-3 py-2">
+                    {hasCoords ? (
+                      <a
+                        href={buildMapUrl(lat!, lon!)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-mono text-xs text-primary hover:underline"
+                      >
+                        {lat!.toFixed(5)}, {lon!.toFixed(5)}
+                        <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                      </a>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {!loading && episodes.length === 0 && (
+              <tr>
+                <td className="px-3 py-6 text-center text-muted-foreground" colSpan={8}>
+                  No flood episodes recorded yet.
+                </td>
+              </tr>
+            )}
+            {loading && (
+              <tr>
+                <td className="px-3 py-6 text-center text-muted-foreground" colSpan={8}>
+                  Loading flood history...
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

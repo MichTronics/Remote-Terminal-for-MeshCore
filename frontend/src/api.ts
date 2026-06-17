@@ -44,6 +44,7 @@ import type {
   StatisticsResponse,
   SpamRouteStatsResponse,
   SpamLiveStatus,
+  SpamFloodEpisodesResponse,
   TraceResponse,
   UnreadCounts,
 } from './types';
@@ -292,6 +293,12 @@ export const api = {
     return fetchJson<SpamRouteStatsResponse>(`/messages/spam/routes${query ? `?${query}` : ''}`);
   },
   getSpamLiveStatus: () => fetchJson<SpamLiveStatus>('/messages/spam/live'),
+  getSpamFloodEpisodes: (params?: { limit?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit !== undefined) searchParams.set('limit', params.limit.toString());
+    const query = searchParams.toString();
+    return fetchJson<SpamFloodEpisodesResponse>(`/messages/spam/episodes${query ? `?${query}` : ''}`);
+  },
   sendDirectMessage: (destination: string, text: string) =>
     fetchJson<Message>('/messages/direct', {
       method: 'POST',

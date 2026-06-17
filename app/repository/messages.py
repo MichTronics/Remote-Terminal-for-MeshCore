@@ -15,6 +15,8 @@ from app.models import (
     SpamRouteStat,
     SpamRouteStatsResponse,
 )
+from app.repository.contacts import ContactRepository
+from app.services.spam_path_analysis import best_prefix_for_hop, hop_suspect_score
 
 
 class MessageRepository:
@@ -66,6 +68,28 @@ class MessageRepository:
     @staticmethod
     def _avg(values: list[float]) -> float | None:
         return sum(values) / len(values) if values else None
+
+    @staticmethod
+    async def _enrich_spam_repeater_stats(repeaters: list[SpamRepeaterStat]) -> list[SpamRepeaterStat]:
+        enriched: list[SpamRepeaterStat] = []
+        for stat in repeaters:
+            contact = await ContactRepository.get_by_key_prefix(stat.hop)
+            if contact is None:
+                enriched.append(stat)
+                continue
+            lat = contact.lat
+            lon = contact.lon
+            has_coords = lat is not None and lon is not None and not (lat == 0.0 and lon == 0.0)
+            enriched.append(
+                stat.model_copy(
+                    update={
+                        "contact_name": contact.name,
+                        "lat": float(lat) if has_coords else None,
+                        "lon": float(lon) if has_coords else None,
+                    }
+                )
+            )
+        return enriched
 
     @staticmethod
     async def get_spam_route_stats(
@@ -180,6 +204,9 @@ class MessageRepository:
             snr = observation["snr"]
             total_messages.add(message_id)
 
+            hop_tokens = MessageRepository._format_path_tokens(path, path_len)
+            observation["hop_tokens"] = hop_tokens
+
             route_key = (path, path_len)
             route = route_buckets.setdefault(
                 route_key,
@@ -211,7 +238,6 @@ class MessageRepository:
             if snr is not None:
                 route["snr_values"].append(float(snr))
 
-            hop_tokens = MessageRepository._format_path_tokens(path, path_len)
             for index, hop in enumerate(hop_tokens):
                 repeater = repeater_buckets.setdefault(
                     hop,
@@ -279,8 +305,14 @@ class MessageRepository:
         def repeater_stat(bucket: dict[str, Any]) -> SpamRepeaterStat:
             avg_rssi = MessageRepository._avg(bucket["rssi_values"])
             avg_snr = MessageRepository._avg(bucket["snr_values"])
+            hop = bucket["hop"]
+            path_tokens = [
+                tuple(observation["hop_tokens"])
+                for observation in observations
+                if hop in observation["hop_tokens"]
+            ]
             return SpamRepeaterStat(
-                hop=bucket["hop"],
+                hop=hop,
                 observation_count=bucket["observation_count"],
                 route_count=len(bucket["route_keys"]),
                 message_count=len(bucket["message_ids"]),
@@ -288,6 +320,8 @@ class MessageRepository:
                 source_side_count=bucket["source_side_count"],
                 radio_side_count=bucket["radio_side_count"],
                 middle_count=bucket["middle_count"],
+                suspect_score=hop_suspect_score(hop, path_tokens),
+                narrowed_prefix=best_prefix_for_hop(hop, path_tokens),
                 first_seen=bucket["first_seen"],
                 last_seen=bucket["last_seen"],
                 avg_rssi=round(avg_rssi, 1) if avg_rssi is not None else None,
@@ -300,8 +334,14 @@ class MessageRepository:
         )[:limit]
         repeaters = sorted(
             (repeater_stat(bucket) for bucket in repeater_buckets.values()),
-            key=lambda item: (-item.observation_count, -item.source_side_count, item.hop),
+            key=lambda item: (
+                -item.suspect_score,
+                -item.source_side_count,
+                -item.observation_count,
+                item.hop,
+            ),
         )[:repeater_limit]
+        repeaters = await MessageRepository._enrich_spam_repeater_stats(repeaters)
 
         return SpamRouteStatsResponse(
             window_hours=window_hours,

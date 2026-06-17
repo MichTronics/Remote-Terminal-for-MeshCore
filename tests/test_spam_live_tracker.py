@@ -43,6 +43,34 @@ async def test_spam_live_tracker_strips_gateway_hops_before_clustering():
 
 
 @pytest.mark.asyncio
+async def test_spam_live_tracker_narrows_shared_prefix_beyond_entry_hop():
+    tracker = _make_tracker(packet_threshold=6, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
+
+    for offset in range(5):
+        await tracker.observe_and_maybe_alert(
+            path_hex="AA" + "BB" + "CC",
+            path_len=3,
+            observed_at=1_700_000_000 + offset,
+        )
+    for offset in range(5, 7):
+        await tracker.observe_and_maybe_alert(
+            path_hex="AA" + "FF" + "GG",
+            path_len=3,
+            observed_at=1_700_000_000 + offset,
+        )
+
+    status = await tracker.get_live_status()
+    assert status.active is True
+    assert len(status.clusters) == 1
+    cluster = status.clusters[0]
+    assert cluster.entry_hop == "AA"
+    assert cluster.refined_hop_tokens == ["AA", "BB"]
+    assert cluster.narrowing_depth == 2
+    assert cluster.traffic_share == pytest.approx(0.7143, rel=0.01)
+    assert cluster.confidence > 0
+
+
+@pytest.mark.asyncio
 async def test_spam_live_tracker_clusters_multiple_ingress_points(test_db):
     tracker = _make_tracker(packet_threshold=6, cluster_min_ratio=0.15)
 

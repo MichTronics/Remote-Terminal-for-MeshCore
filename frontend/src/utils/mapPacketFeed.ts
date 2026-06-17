@@ -101,8 +101,7 @@ export function formatMapPacketHops(pathBytes: string[]): string {
 export function formatMapPacketDecodedMessage(message: string | null | undefined): string {
   const trimmed = message?.trim();
   if (!trimmed) return '';
-  if (trimmed.length <= 30) return `: ${trimmed}`;
-  return `: ${trimmed.slice(0, 28)}...`;
+  return `\n   ${trimmed}`;
 }
 
 function formatKnownOrToken(

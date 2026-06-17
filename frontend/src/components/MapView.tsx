@@ -173,7 +173,7 @@ const MAP_ROLE_COLORS: Record<MapRoleKey, string> = {
 const MAP_ROLE_RADIUS: Record<MapRoleKey, number> = {
   repeater: 7, // was 9
   companion: 6, // was 8
-  room: 6, // was 8
+  room: 7, // was 8
   sensor: 6, // was 7
   unknown: 6, // was 7
 };
@@ -211,10 +211,10 @@ function getContactRoleKey(contact: Contact): MapRoleKey {
 function getMarkerStaleOpacity(lastSeen: number | null | undefined): number {
   if (lastSeen == null) return 0.35;
   const age = Date.now() / 1000 - lastSeen;
-  if (age < 3600) return 1;
-  if (age < 86400) return 0.85;
-  if (age < 3 * 86400) return 0.6;
-  return 0.4;
+  if (age < 3600) return 1; // age < 1h
+  if (age < 86400) return 0.85; // age < 24h
+  if (age < 3 * 86400) return 0.6; // age < 3 days
+  return 0.25; // age >= 3 days
 }
 
 function makeRoleMarkerIcon(role: MapRoleKey, opacity: number, scale = 1): L.DivIcon {

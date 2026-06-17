@@ -171,11 +171,11 @@ const MAP_ROLE_COLORS: Record<MapRoleKey, string> = {
 };
 
 const MAP_ROLE_RADIUS: Record<MapRoleKey, number> = {
-  repeater: 9,
-  companion: 8,
-  room: 8,
-  sensor: 7,
-  unknown: 7,
+  repeater: 7, // was 9
+  companion: 6, // was 8
+  room: 6, // was 8
+  sensor: 6, // was 7
+  unknown: 6, // was 7
 };
 
 const MAP_ROLE_LABELS: Record<MapRoleKey, string> = {

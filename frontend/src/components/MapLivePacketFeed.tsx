@@ -53,12 +53,12 @@ function FeedLine({ entry }: { entry: MapPacketFeedEntry }) {
         <span className="font-semibold" style={{ color: entry.typeColor }}>
           {(entry.typeLabel).padEnd(9, '\u00A0')}
         </span>{' '}
-        {entry.hopsPrefix && <span className="text-muted-foreground">{entry.hopsPrefix}</span>}
+        {entry.hopsPrefix && <span className="text-muted-foreground">{(entry.hopsPrefix).padEnd(5, '\u00A0')}</span>}
         {entry.senderLabel && (
           <span className="text-foreground/80">
-            From {entry.senderLabel}
+            {entry.senderLabel}
             {entry.channelTargetLabel && (
-              <span className="text-foreground/80 text-[#14b8a6]"> to {entry.channelTargetLabel}</span>
+              <span className="text-foreground/80 text-[#14b8a6]"> ⇢ {entry.channelTargetLabel}</span>
             )}
             {entry.inlineSuffix && (
               <span className="text-muted-foreground">{entry.inlineSuffix}</span>

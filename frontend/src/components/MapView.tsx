@@ -22,9 +22,12 @@ import {
   parsePacket,
   getPacketLabel,
   PARTICLE_COLOR_MAP,
-  dedupeConsecutive,
 } from '../utils/visualizerUtils';
 import { getRawPacketObservationKey } from '../utils/rawPacketIdentity';
+import {
+  resolveMapPacketContactKeys,
+  resolveMapPacketWaypoints,
+} from '../utils/mapPacketPath';
 import { MapLivePacketFeed } from './MapLivePacketFeed';
 
 interface MapViewProps {
@@ -284,74 +287,19 @@ function makeTrackerMarkerIcon(scale = 1, heading: number | null = null): L.DivI
   });
 }
 
-/** Resolve a hop token to a single contact with GPS, or null. */
-function resolveHopToGps(hopToken: string, prefixIndex: Map<string, Contact[]>): Contact | null {
-  const matches = prefixIndex.get(hopToken.toLowerCase());
-  if (!matches || matches.length !== 1) return null;
-  const c = matches[0];
-  return isValidLocation(c.lat, c.lon) ? c : null;
-}
-
-/** Resolve a contact by display name (for GroupText senders). */
-function resolveNameToGps(name: string, nameIndex: Map<string, Contact>): Contact | null {
-  const c = nameIndex.get(name);
-  if (!c) return null;
-  return isValidLocation(c.lat, c.lon) ? c : null;
-}
-
-/** Collect public keys of all unambiguously resolved GPS-bearing contacts from a parsed packet. */
-function resolvePacketContacts(
-  parsed: ReturnType<typeof parsePacket>,
+/** Resolve geographic waypoints and discovered contact keys for map live traffic. */
+function buildMapPacketPathContext(
   prefixIndex: Map<string, Contact[]>,
   nameIndex: Map<string, Contact>,
   myLatLon: [number, number] | null,
   config?: RadioConfig | null
-): Set<string> {
-  const keys = new Set<string>();
-  if (!parsed) return keys;
-
-  // Source by pubkey prefix
-  const sourcePrefixes = parsed.advertPubkey
-    ? [parsed.advertPubkey.slice(0, 12).toLowerCase()]
-    : parsed.srcHash
-      ? [parsed.srcHash.toLowerCase()]
-      : [];
-  for (const prefix of sourcePrefixes) {
-    const matches = prefixIndex.get(prefix);
-    if (matches?.length === 1 && isValidLocation(matches[0].lat, matches[0].lon)) {
-      keys.add(matches[0].public_key);
-    }
-  }
-
-  // Source by name (GroupText sender)
-  if (parsed.groupTextSender) {
-    const c = resolveNameToGps(parsed.groupTextSender, nameIndex);
-    if (c) keys.add(c.public_key);
-  }
-
-  // Intermediate hops
-  for (const hop of parsed.pathBytes) {
-    if (hop.length < 4) continue;
-    const matches = prefixIndex.get(hop.toLowerCase());
-    if (matches?.length === 1 && isValidLocation(matches[0].lat, matches[0].lon)) {
-      keys.add(matches[0].public_key);
-    }
-  }
-
-  // Self
-  if (myLatLon && config?.public_key) {
-    keys.add(config.public_key.toLowerCase());
-  }
-
-  // Destination
-  if (parsed.dstHash) {
-    const matches = prefixIndex.get(parsed.dstHash.toLowerCase());
-    if (matches?.length === 1 && isValidLocation(matches[0].lat, matches[0].lon)) {
-      keys.add(matches[0].public_key);
-    }
-  }
-
-  return keys;
+) {
+  return {
+    prefixIndex,
+    nameIndex,
+    myLatLon,
+    myPublicKey: config?.public_key ?? null,
+  };
 }
 
 interface MapParticle {
@@ -949,61 +897,16 @@ export function MapView({
     blockedNames,
   ]);
 
-  // Resolve a path of hop tokens to geographic waypoints (only unambiguous + has GPS)
+  // Resolve a parsed packet to geographic waypoints for particle/route rendering.
+  const mapPacketPathContext = useMemo(
+    () => buildMapPacketPathContext(prefixIndex, nameIndex, myLatLon, config),
+    [prefixIndex, nameIndex, myLatLon, config]
+  );
+
   const resolvePacketPath = useCallback(
-    (parsed: ReturnType<typeof parsePacket>): [number, number][] | null => {
-      if (!parsed) return null;
-
-      const waypoints: [number, number][] = [];
-
-      // Source: advertPubkey, srcHash, or groupTextSender resolved by name
-      let sourceContact: Contact | null = null;
-      if (parsed.advertPubkey) {
-        const prefix = parsed.advertPubkey.slice(0, 12).toLowerCase();
-        const matches = prefixIndex.get(prefix);
-        if (matches?.length === 1 && isValidLocation(matches[0].lat, matches[0].lon)) {
-          sourceContact = matches[0];
-        }
-      } else if (parsed.srcHash) {
-        sourceContact = resolveHopToGps(parsed.srcHash, prefixIndex);
-      } else if (parsed.groupTextSender) {
-        sourceContact = resolveNameToGps(parsed.groupTextSender, nameIndex);
-      }
-
-      if (sourceContact) {
-        waypoints.push([sourceContact.lat!, sourceContact.lon!]);
-      }
-
-      // Intermediate hops (path bytes)
-      for (const hop of parsed.pathBytes) {
-        // Only resolve 2+ byte hops (4+ hex chars) to avoid ambiguous 1-byte hops
-        if (hop.length < 4) continue;
-        const contact = resolveHopToGps(hop, prefixIndex);
-        if (contact) {
-          waypoints.push([contact.lat!, contact.lon!]);
-        }
-      }
-
-      // Destination: self (our radio), or dstHash
-      if (myLatLon) {
-        waypoints.push(myLatLon);
-      } else if (parsed.dstHash) {
-        const dest = resolveHopToGps(parsed.dstHash, prefixIndex);
-        if (dest) {
-          waypoints.push([dest.lat!, dest.lon!]);
-        }
-      }
-
-      // Dedupe consecutive identical waypoints
-      const deduped = dedupeConsecutive(waypoints.map((w) => `${w[0]},${w[1]}`));
-      if (deduped.length < 2) return null;
-
-      return deduped.map((s) => {
-        const [lat, lon] = s.split(',').map(Number);
-        return [lat, lon] as [number, number];
-      });
-    },
-    [prefixIndex, nameIndex, myLatLon]
+    (parsed: ReturnType<typeof parsePacket>, packet?: RawPacket | null) =>
+      parsed ? resolveMapPacketWaypoints(parsed, mapPacketPathContext, packet) : null,
+    [mapPacketPathContext]
   );
 
   // Process new packets into particles and track discovered contacts
@@ -1026,14 +929,12 @@ export function MapView({
       if (!parsed) continue;
 
       // Discover contacts from this packet regardless of whether a full path resolves
-      const resolvedContacts = resolvePacketContacts(
+      const resolvedContacts = resolveMapPacketContactKeys(
         parsed,
-        prefixIndex,
-        nameIndex,
-        myLatLon,
-        config
+        mapPacketPathContext,
+        pkt
       );
-      const path = resolvePacketPath(parsed);
+      const path = resolvePacketPath(parsed, pkt);
 
       // Only mark as seen if we got something useful; otherwise a later run
       // with updated contacts/config can retry this observation.
@@ -1072,11 +973,8 @@ export function MapView({
     rawPackets,
     showPackets,
     resolvePacketPath,
+    mapPacketPathContext,
     threeDaysAgoSec,
-    prefixIndex,
-    nameIndex,
-    myLatLon,
-    config,
   ]);
 
   // Prune expired particles periodically
@@ -1322,6 +1220,8 @@ export function MapView({
           packets={rawPackets ?? []}
           contacts={contacts}
           channels={channels}
+          myPublicKey={config?.public_key ?? null}
+          myName={config?.name ?? null}
           visible={showPackets}
         />
       </div>

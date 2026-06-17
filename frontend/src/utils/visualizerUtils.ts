@@ -179,6 +179,17 @@ export function parsePacket(hexData: string): ParsedPacket | null {
     } else if (decoded.payloadType === PayloadType.AnonRequest && decoded.payload.decoded) {
       const payload = decoded.payload.decoded as { senderPublicKey?: string };
       result.anonRequestPubkey = payload.senderPublicKey || null;
+    } else if (
+      (decoded.payloadType === PayloadType.Request ||
+        decoded.payloadType === PayloadType.Response) &&
+      decoded.payload.decoded
+    ) {
+      const payload = decoded.payload.decoded as {
+        sourceHash?: string;
+        destinationHash?: string;
+      };
+      result.srcHash = payload.sourceHash || null;
+      result.dstHash = payload.destinationHash || null;
     }
 
     return result;

@@ -81,7 +81,7 @@ function makeChannel(name: string, key: string): Channel {
 
 describe('mapPacketFeed', () => {
   it('formats hop count instead of listing hop tokens', () => {
-    expect(formatMapPacketHops(['aa11', 'bb22'])).toBe('(2->) ');
+    expect(formatMapPacketHops(['aa11', 'bb22'])).toBe('(2⇢) ');
     expect(formatMapPacketHops([])).toBe('');
   });
 
@@ -93,24 +93,24 @@ describe('mapPacketFeed', () => {
   });
 
   it('shows source hash tokens like the packet feed when no contact matches', () => {
-    const indexes = buildMapPacketFeedContext([]).indexes;
+    const context = buildMapPacketFeedContext([]);
     const packet = makePacket();
     const decoded = makeDecodedStub(PayloadType.TextMessage, { sourceHash: '34' });
 
-    expect(formatMapPacketSenderFromDecoded(packet, decoded, indexes)).toBe('34');
+    expect(formatMapPacketSenderFromDecoded(packet, decoded, context)).toBe('34');
   });
 
   it('truncates long hex identities to six characters', () => {
-    const indexes = buildMapPacketFeedContext([]).indexes;
+    const context = buildMapPacketFeedContext([]);
     const packet = makePacket();
     const longKey = 'ba2840bcec68fdcb87ff69742b7d0812e93b18d8473f0c82e24b631232ac06e9';
     const decoded = makeDecodedStub(PayloadType.AnonRequest, { senderPublicKey: longKey });
 
-    expect(formatMapPacketSenderFromDecoded(packet, decoded, indexes)).toBe('ba2840');
+    expect(formatMapPacketSenderFromDecoded(packet, decoded, context)).toBe('ba2840');
   });
 
   it('shows encrypted channel suffix and first-hop sender when group text is not decrypted', () => {
-    const indexes = buildMapPacketFeedContext([]).indexes;
+    const context = buildMapPacketFeedContext([]);
     const packet = makePacket({ decrypted: false });
     const decoded = makeDecodedStub(
       PayloadType.GroupText,
@@ -118,9 +118,9 @@ describe('mapPacketFeed', () => {
       ['02', 'aa', 'bb', 'cc', 'dd', 'ee', 'ff']
     );
 
-    expect(formatMapPacketSenderFromDecoded(packet, decoded, indexes)).toBe('02');
+    expect(formatMapPacketSenderFromDecoded(packet, decoded, context)).toBe('02');
     expect(formatMapPacketGroupTextInlineSuffix(decoded)).toBe(' *encrypted* ch:0E');
-    expect(formatMapPacketHops(decoded.path ?? [])).toBe('(7->) ');
+    expect(formatMapPacketHops(decoded.path ?? [])).toBe('(7⇢) ');
   });
 
   it('formats known sender as name plus pubkey snippet', () => {
@@ -140,7 +140,7 @@ describe('mapPacketFeed', () => {
       decrypted: { sender: 'MountainTop' },
     });
 
-    expect(formatMapPacketSenderFromDecoded(packet, decoded, context.indexes)).toBe('MountainTop');
+    expect(formatMapPacketSenderFromDecoded(packet, decoded, context)).toBe('MountainTop');
   });
 
   it('builds feed entries newest-first with a limit of 12', () => {
@@ -196,21 +196,28 @@ describe('mapPacketFeed', () => {
     expect(entry.inlineSuffix).toBe('');
   });
 
-  it('puts decoded direct messages on a second indented line', () => {
-    const context = buildMapPacketFeedContext([]);
+  it('puts decoded direct messages on a second indented line with recipient target', () => {
+    const selfKey = 'ffffffffffff0000000000000000000000000000000000000000000000000000';
+    const bob = makeContact({
+      public_key: 'bbbbbbbbbbbb0000000000000000000000000000000000000000000000000000',
+      name: 'Bob',
+    });
+    const context = buildMapPacketFeedContext([bob], null, selfKey, 'MyRadio');
     const entry = buildMapPacketFeedEntry(
       makePacket({
         payload_type: 'TextMessage',
         decrypted: true,
         decrypted_info: {
-          sender: 'Alice',
+          sender: 'MyRadio',
+          contact_key: bob.public_key,
           message: 'hello there',
         } as RawPacket['decrypted_info'],
       }),
       context
     );
 
-    expect(entry.channelTargetLabel).toBeNull();
+    expect(entry.senderLabel).toBe('MyRadio');
+    expect(entry.channelTargetLabel).toBe('Bob (BBBB)');
     expect(entry.messageBody).toBe('hello there');
     expect(entry.inlineSuffix).toBe('');
   });

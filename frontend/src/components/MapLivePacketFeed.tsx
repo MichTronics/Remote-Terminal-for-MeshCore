@@ -43,6 +43,8 @@ interface MapLivePacketFeedProps {
   packets: RawPacket[];
   contacts: Contact[];
   channels?: Channel[];
+  myPublicKey?: string | null;
+  myName?: string | null;
   visible: boolean;
 }
 
@@ -76,7 +78,14 @@ function FeedLine({ entry }: { entry: MapPacketFeedEntry }) {
   );
 }
 
-export function MapLivePacketFeed({ packets, contacts, channels, visible }: MapLivePacketFeedProps) {
+export function MapLivePacketFeed({
+  packets,
+  contacts,
+  channels,
+  myPublicKey,
+  myName,
+  visible,
+}: MapLivePacketFeedProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const [position, setPosition] = useState<StoredPosition>(
@@ -85,8 +94,8 @@ export function MapLivePacketFeed({ packets, contacts, channels, visible }: MapL
   const [dragging, setDragging] = useState(false);
 
   const feedContext = useMemo(
-    () => buildMapPacketFeedContext(contacts, channels),
-    [contacts, channels]
+    () => buildMapPacketFeedContext(contacts, channels, myPublicKey, myName),
+    [contacts, channels, myPublicKey, myName]
   );
   const entries = useMemo(
     () => (visible ? buildMapPacketFeedEntries(packets, feedContext) : []),

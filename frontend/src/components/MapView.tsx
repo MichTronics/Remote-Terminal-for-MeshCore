@@ -1092,8 +1092,20 @@ export function MapView({
               aria-hidden="true"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-                <polygon points="6,1 8,6 6,5 4,6" fill="#0072B2" stroke="#1a1a1a" strokeWidth="0.75" />
-                <circle cx="6" cy="6" r="2" fill="#0072B2" stroke="#1a1a1a" strokeWidth="0.75" />
+                <polygon
+                  points="6,1 8,6 6,5 4,6"
+                  fill={TRACKER_MARKER_COLOR}
+                  stroke="#1a1a1a"
+                  strokeWidth="0.75"
+                />
+                <circle
+                  cx="6"
+                  cy="6"
+                  r="2"
+                  fill={TRACKER_MARKER_COLOR}
+                  stroke="#1a1a1a"
+                  strokeWidth="0.75"
+                />
               </svg>
             </span>
             Tracker

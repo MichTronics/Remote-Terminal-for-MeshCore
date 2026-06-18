@@ -26,6 +26,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   'radio',
   'local',
   'radio-app',
+  'spam-defense',
   'fanout',
   'database',
   'statistics',

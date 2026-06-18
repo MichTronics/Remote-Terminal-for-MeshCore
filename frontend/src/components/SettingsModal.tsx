@@ -25,6 +25,7 @@ import { SettingsFanoutSection } from './settings/SettingsFanoutSection';
 import { SettingsDatabaseSection } from './settings/SettingsDatabaseSection';
 import { SettingsStatisticsSection } from './settings/SettingsStatisticsSection';
 import { SettingsAboutSection } from './settings/SettingsAboutSection';
+import { SettingsSpamDefenseSection } from './settings/SettingsSpamDefenseSection';
 
 interface SettingsModalBaseProps {
   open: boolean;
@@ -112,6 +113,7 @@ export function SettingsModal(props: SettingsModalProps) {
     radio: false,
     local: false,
     'radio-app': false,
+    'spam-defense': false,
     fanout: false,
     database: false,
     statistics: false,
@@ -263,6 +265,27 @@ export function SettingsModal(props: SettingsModalProps) {
                 onToggleTrackedTelemetry={onToggleTrackedTelemetry}
                 trackedTelemetryContacts={trackedTelemetryContacts}
                 onToggleTrackedTelemetryContact={onToggleTrackedTelemetryContact}
+                className={sectionContentClass}
+              />
+            ) : (
+              <div className={sectionContentClass}>
+                <div className="rounded-md border border-input bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                  Loading app settings...
+                </div>
+              </div>
+            ))}
+        </section>
+      )}
+
+      {shouldRenderSection('spam-defense') && (
+        <section className={sectionWrapperClass}>
+          {renderSectionHeader('spam-defense')}
+          {isSectionVisible('spam-defense') &&
+            (appSettings ? (
+              <SettingsSpamDefenseSection
+                appSettings={appSettings}
+                onSaveAppSettings={onSaveAppSettings}
+                contacts={contacts}
                 className={sectionContentClass}
               />
             ) : (

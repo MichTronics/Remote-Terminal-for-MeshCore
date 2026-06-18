@@ -371,6 +371,12 @@ Run backend tests:
 PYTHONPATH=. uv run pytest tests/ -v
 ```
 
+Backend quality gate (ruff + pyright + pytest, no frontend build):
+
+```bash
+./scripts/quality/backend_quality.sh
+```
+
 Test suites:
 
 ```text
@@ -464,5 +470,5 @@ MeshCore uses `0.0` as the sentinel for "no GPS coordinates" (see `models.py` `t
 When changing backend behavior:
 1. Update/add router and repository tests.
 2. Confirm WS event contracts when payload shape changes.
-3. Run `PYTHONPATH=. uv run pytest tests/ -v`.
-4. If API contract changed, update frontend types and AGENTS docs.
+3. Run `./scripts/quality/backend_quality.sh` (or `PYTHONPATH=. uv run pytest tests/ -v` for a quick pass).
+4. If API contract changed, update frontend types and AGENTS docs, then run `./scripts/quality/all_quality.sh`.

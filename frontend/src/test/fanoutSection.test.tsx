@@ -113,6 +113,10 @@ beforeEach(() => {
     auto_resend_channel: false,
     telemetry_interval_hours: 8,
     telemetry_routed_hourly: false,
+    spam_flood_automation_enabled: false,
+    spam_flood_repeater_keys: [],
+    spam_flood_start_command: '',
+    spam_flood_end_command: '',
   });
   mockedApi.getRadioConfig.mockResolvedValue({
     public_key: 'aa'.repeat(32),
@@ -1058,6 +1062,10 @@ describe('SettingsFanoutSection', () => {
       auto_resend_channel: false,
       telemetry_interval_hours: 8,
       telemetry_routed_hourly: false,
+      spam_flood_automation_enabled: false,
+      spam_flood_repeater_keys: [],
+      spam_flood_start_command: '',
+      spam_flood_end_command: '',
     });
 
     renderSection();

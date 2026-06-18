@@ -15,6 +15,7 @@ from app.path_utils import split_path_hex, hop_allows_prefix_name_lookup
 from app.repository.contacts import ContactRepository
 from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
 from app.services.spam_baseline import SpamBaselineService
+from app.services.spam_flood_repeater_automation import schedule_spam_flood_repeater_commands
 from app.services.spam_path_analysis import (
     cluster_confidence,
     estimate_origin_geo,
@@ -31,18 +32,19 @@ _MAX_DISPLAY_ROUTE_HOPS = 10
 _DEFAULT_GATEWAY_PUBKEYS: tuple[str, ...] = (
     "1228d131fa4b13c78a7aefee124e5c7fe51a8555115220d64d1df749b5a7de8c",
     "753c3a558d71c52669cf59d67dd9be41725efd8af113b2f2f36925bde002f5b1",
-    "db371c0634d23dd4dc72556366f6cd19578ac91eb85257ea259af8f8bb1d14e0",
+    "753c3a558d71c52669cf59d67dd9be41725efd8af113b2f2f36925bde002f5b1",
+    "6cfa92bb8d6270c0b2675047824352462c741aa9ce9c93bba777693a0bd5b972",
     "40b8bacb92538bdaa3d45abb759dd8cfcefaefc5a8f1e77d0f3dc6b7b5452429",
     "82e422e3a9d279d31df8794439dd92803db0658c9d6579cc717bbc0f266070dd",
     "2092ae5d57ff8836f2047a1f74f695084247aac2b85cdc5d4ecf7cb9f2ad3c0e",
     "8fb483861e77a9e8021ed546510ba6deb9e7708dd2330c407f05e085a8f6e31a",
-    "d26506b1ed9c8a839bfca3b1ab0afe64a6e30fb47cb0d742d2f81efbee2a17e2",
     "7d5abd286e07f4995dda8a220d044ef2f13949fcc4f3621e4a69bfc20519259a",
+    "d26506b1ed9c8a839bfca3b1ab0afe64a6e30fb47cb0d742d2f81efbee2a17e2",
     "eb46b319cd2dac975ae178d07d57806fd6b8a4d5301027d76fbd3b3f8df3e3f8",
     "66cca85f210d7af515f8c5760aa222ba1072762446b7fddaef36308a3a12513b",
     "049314d147f018f44633be5b8a4852279295bb5eced77488c451ec83ebc28afa",
+    "6a2ef6c39e04437244decfddfe7053a5de0749ef8ed7203f27315cd40a0ce609"
 )
-
 
 def _parse_gateway_pubkeys(raw: str) -> frozenset[str]:
     if not raw.strip():
@@ -572,6 +574,7 @@ class SpamLiveTracker:
         self._episode_peak_window = self._trigger_window_count(current_time)
         self._episode_last_clusters = []
         self._episode_peak_clusters = {}
+        schedule_spam_flood_repeater_commands("start")
 
     def _schedule_episode_progress(self) -> None:
         if self._episode_db_id is None:
@@ -625,6 +628,7 @@ class SpamLiveTracker:
         except Exception:
             logger.exception("Failed to finalize spam flood episode %s", episode_id)
         finally:
+            schedule_spam_flood_repeater_commands("end")
             self._episode_db_id = None
             self._episode_total_packets = 0
             self._episode_peak_window = 0

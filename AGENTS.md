@@ -12,6 +12,12 @@ If instructed to "run all tests" or "get ready for a commit" or other summative,
 
 This is the repo's end-to-end quality gate. It runs backend/frontend autofixers first, then type checking, tests, and the standard frontend build. All checks must pass green, and the script may leave formatting/lint edits behind.
 
+For **backend-only** iteration (no frontend changes), use the lighter gate instead — it skips npm entirely:
+
+```bash
+./scripts/quality/backend_quality.sh
+```
+
 ## Overview
 
 A web interface for MeshCore mesh radio networks. The backend connects to a MeshCore-compatible radio over Serial, TCP, or BLE and exposes REST/WebSocket APIs. The React frontend provides real-time messaging and radio configuration.
@@ -283,6 +289,12 @@ If `frontend/dist` is missing, the backend falls back to `frontend/prebuilt` whe
 PYTHONPATH=. uv run pytest tests/ -v
 ```
 
+Or run the backend quality gate (ruff, pyright, pytest — no frontend build):
+
+```bash
+./scripts/quality/backend_quality.sh
+```
+
 Key test files:
 - `tests/test_api.py` - Broad API integration coverage across routers and read-state flows
 - `tests/test_packet_pipeline.py` - End-to-end packet processing, decrypt, dedup, and message creation
@@ -311,7 +323,7 @@ npm run test:run
 
 ### Before Completing Major Changes
 
-**Run `./scripts/quality/all_quality.sh` before finishing major changes that have modified code or tests.** It is the standard repo gate: autofix first, then type checks, tests, and the standard frontend build. This is not necessary for docs-only changes. For minor changes (like wording, color, spacing, etc.), wait until prompted to run the quality gate.
+**Run `./scripts/quality/all_quality.sh` before finishing major changes that touch frontend or cross-layer contracts.** For backend-only work, `./scripts/quality/backend_quality.sh` is enough while iterating. The full gate is not necessary for docs-only changes. For minor changes (like wording, color, spacing, etc.), wait until prompted to run the quality gate.
 
 ## API Summary
 

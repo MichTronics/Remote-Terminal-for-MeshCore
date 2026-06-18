@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.models import ContactUpsert
@@ -259,6 +261,28 @@ async def test_spam_live_tracker_skips_two_byte_hop_names_when_prefix_is_ambiguo
     assert cluster.entry_hop == "AA11"
     assert cluster.entry_name is None
     assert "AA11" not in cluster.hop_names_by_token
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_schedules_repeater_commands_on_episode_lifecycle(test_db):
+    tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())
+    with (
+        patch(
+            "app.services.spam_live_tracker.schedule_spam_flood_repeater_commands",
+        ) as mock_schedule,
+        patch(
+            "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+            new_callable=AsyncMock,
+            return_value=1.0,
+        ),
+    ):
+        await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=1_700_000_000)
+        await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=1_700_000_001)
+        mock_schedule.assert_called_once_with("start")
+
+        tracker._sync_active_state(1_700_000_040)
+        await tracker._end_episode(1_700_000_040)
+        assert mock_schedule.call_args_list[-1].args == ("end",)
 
 
 @pytest.mark.asyncio

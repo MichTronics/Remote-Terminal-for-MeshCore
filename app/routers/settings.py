@@ -21,6 +21,8 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 MAX_TRACKED_TELEMETRY_REPEATERS = 8
 MAX_TRACKED_TELEMETRY_CONTACTS = 8
+MAX_SPAM_FLOOD_REPEATERS = 16
+MAX_SPAM_FLOOD_COMMAND_LEN = 256
 
 
 class AppSettingsUpdate(BaseModel):
@@ -86,6 +88,24 @@ class AppSettingsUpdate(BaseModel):
         ge=1,
         le=168,
         description="Retention period for tracker location history in hours (1-168, default 12)",
+    )
+    spam_flood_automation_enabled: bool | None = Field(
+        default=None,
+        description="Send configured repeater CLI commands when spam flood episodes start/end",
+    )
+    spam_flood_repeater_keys: list[str] | None = Field(
+        default=None,
+        description="Repeater public keys that receive spam-flood automation commands",
+    )
+    spam_flood_start_command: str | None = Field(
+        default=None,
+        max_length=MAX_SPAM_FLOOD_COMMAND_LEN,
+        description="CLI command sent when a spam flood episode starts",
+    )
+    spam_flood_end_command: str | None = Field(
+        default=None,
+        max_length=MAX_SPAM_FLOOD_COMMAND_LEN,
+        description="CLI command sent when a spam flood episode ends",
     )
 
 
@@ -257,6 +277,35 @@ async def update_settings(update: AppSettingsUpdate) -> AppSettings:
     if update.tracker_history_hours is not None:
         logger.info("Updating tracker_history_hours to %d", update.tracker_history_hours)
         kwargs["tracker_history_hours"] = update.tracker_history_hours
+
+    if update.spam_flood_automation_enabled is not None:
+        kwargs["spam_flood_automation_enabled"] = update.spam_flood_automation_enabled
+
+    if update.spam_flood_repeater_keys is not None:
+        if len(update.spam_flood_repeater_keys) > MAX_SPAM_FLOOD_REPEATERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At most {MAX_SPAM_FLOOD_REPEATERS} repeaters can be selected",
+            )
+        normalized_keys: list[str] = []
+        for public_key in update.spam_flood_repeater_keys:
+            key = public_key.lower()
+            contact = await ContactRepository.get_by_key(key)
+            if contact is None:
+                raise HTTPException(status_code=404, detail=f"Repeater not found: {key[:12]}")
+            if contact.type != CONTACT_TYPE_REPEATER:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Contact is not a repeater: {key[:12]}",
+                )
+            normalized_keys.append(key)
+        kwargs["spam_flood_repeater_keys"] = normalized_keys
+
+    if update.spam_flood_start_command is not None:
+        kwargs["spam_flood_start_command"] = update.spam_flood_start_command.strip()
+
+    if update.spam_flood_end_command is not None:
+        kwargs["spam_flood_end_command"] = update.spam_flood_end_command.strip()
 
     # Flood scope
     flood_scope_changed = False

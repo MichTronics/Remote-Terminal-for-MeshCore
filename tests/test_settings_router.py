@@ -130,6 +130,27 @@ class TestUpdateSettings:
 
         mock_mc.commands.set_flood_scope.assert_awaited_once_with("")
 
+    @pytest.mark.asyncio
+    async def test_updates_spam_flood_automation_fields(self, test_db):
+        repeater_key = "ee" + "ff" * 31
+        await ContactRepository.upsert(
+            ContactUpsert(public_key=repeater_key, name="Edge Repeater", type=CONTACT_TYPE_REPEATER)
+        )
+
+        result = await update_settings(
+            AppSettingsUpdate(
+                spam_flood_automation_enabled=True,
+                spam_flood_repeater_keys=[repeater_key],
+                spam_flood_start_command="set repeat off",
+                spam_flood_end_command="set repeat on",
+            )
+        )
+
+        assert result.spam_flood_automation_enabled is True
+        assert result.spam_flood_repeater_keys == [repeater_key]
+        assert result.spam_flood_start_command == "set repeat off"
+        assert result.spam_flood_end_command == "set repeat on"
+
 
 class TestToggleFavorite:
     @pytest.mark.asyncio

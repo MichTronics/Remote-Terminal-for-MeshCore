@@ -44,7 +44,9 @@ class AppSettingsRepository:
                    tracked_telemetry_repeaters, tracked_telemetry_contacts,
                    auto_resend_channel,
                    telemetry_interval_hours, telemetry_routed_hourly,
-                   tracker_history_hours
+                   tracker_history_hours,
+                   spam_flood_automation_enabled, spam_flood_repeater_keys,
+                   spam_flood_start_command, spam_flood_end_command
             FROM app_settings WHERE id = 1
             """
         ) as cursor:
@@ -138,6 +140,29 @@ class AppSettingsRepository:
         except (KeyError, TypeError, ValueError):
             tracker_history_hours = 12
 
+        try:
+            spam_flood_automation_enabled = bool(row["spam_flood_automation_enabled"])
+        except (KeyError, TypeError):
+            spam_flood_automation_enabled = False
+
+        spam_flood_repeater_keys: list[str] = []
+        try:
+            raw_spam_repeaters = row["spam_flood_repeater_keys"]
+            if raw_spam_repeaters:
+                spam_flood_repeater_keys = json.loads(raw_spam_repeaters)
+        except (json.JSONDecodeError, TypeError, KeyError):
+            spam_flood_repeater_keys = []
+
+        try:
+            spam_flood_start_command = row["spam_flood_start_command"] or ""
+        except (KeyError, TypeError):
+            spam_flood_start_command = ""
+
+        try:
+            spam_flood_end_command = row["spam_flood_end_command"] or ""
+        except (KeyError, TypeError):
+            spam_flood_end_command = ""
+
         return AppSettings(
             max_radio_contacts=row["max_radio_contacts"],
             auto_decrypt_dm_on_advert=bool(row["auto_decrypt_dm_on_advert"]),
@@ -154,6 +179,10 @@ class AppSettingsRepository:
             telemetry_interval_hours=telemetry_interval_hours,
             telemetry_routed_hourly=telemetry_routed_hourly,
             tracker_history_hours=tracker_history_hours,
+            spam_flood_automation_enabled=spam_flood_automation_enabled,
+            spam_flood_repeater_keys=spam_flood_repeater_keys,
+            spam_flood_start_command=spam_flood_start_command,
+            spam_flood_end_command=spam_flood_end_command,
         )
 
     @staticmethod
@@ -175,6 +204,10 @@ class AppSettingsRepository:
         telemetry_interval_hours: int | None = None,
         telemetry_routed_hourly: bool | None = None,
         tracker_history_hours: int | None = None,
+        spam_flood_automation_enabled: bool | None = None,
+        spam_flood_repeater_keys: list[str] | None = None,
+        spam_flood_start_command: str | None = None,
+        spam_flood_end_command: str | None = None,
     ) -> None:
         """Apply field updates using an already-acquired connection.
 
@@ -244,6 +277,22 @@ class AppSettingsRepository:
             updates.append("tracker_history_hours = ?")
             params.append(tracker_history_hours)
 
+        if spam_flood_automation_enabled is not None:
+            updates.append("spam_flood_automation_enabled = ?")
+            params.append(1 if spam_flood_automation_enabled else 0)
+
+        if spam_flood_repeater_keys is not None:
+            updates.append("spam_flood_repeater_keys = ?")
+            params.append(json.dumps(spam_flood_repeater_keys))
+
+        if spam_flood_start_command is not None:
+            updates.append("spam_flood_start_command = ?")
+            params.append(spam_flood_start_command)
+
+        if spam_flood_end_command is not None:
+            updates.append("spam_flood_end_command = ?")
+            params.append(spam_flood_end_command)
+
         if updates:
             query = f"UPDATE app_settings SET {', '.join(updates)} WHERE id = 1"
             async with conn.execute(query, params):
@@ -275,6 +324,10 @@ class AppSettingsRepository:
         telemetry_interval_hours: int | None = None,
         telemetry_routed_hourly: bool | None = None,
         tracker_history_hours: int | None = None,
+        spam_flood_automation_enabled: bool | None = None,
+        spam_flood_repeater_keys: list[str] | None = None,
+        spam_flood_start_command: str | None = None,
+        spam_flood_end_command: str | None = None,
     ) -> AppSettings:
         """Update app settings. Only provided fields are updated."""
         async with db.tx() as conn:
@@ -295,6 +348,10 @@ class AppSettingsRepository:
                 telemetry_interval_hours=telemetry_interval_hours,
                 telemetry_routed_hourly=telemetry_routed_hourly,
                 tracker_history_hours=tracker_history_hours,
+                spam_flood_automation_enabled=spam_flood_automation_enabled,
+                spam_flood_repeater_keys=spam_flood_repeater_keys,
+                spam_flood_start_command=spam_flood_start_command,
+                spam_flood_end_command=spam_flood_end_command,
             )
             return await AppSettingsRepository._get_in_conn(conn)
 

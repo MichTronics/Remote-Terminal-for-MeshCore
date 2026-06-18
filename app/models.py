@@ -1198,6 +1198,22 @@ class AppSettings(BaseModel):
         le=168,
         description="Tracker location history retention window in hours (1-168, default 12)",
     )
+    spam_flood_automation_enabled: bool = Field(
+        default=False,
+        description="When enabled, send configured CLI commands to selected repeaters on spam flood start/end",
+    )
+    spam_flood_repeater_keys: list[str] = Field(
+        default_factory=list,
+        description="Favorite repeaters to receive spam-flood automation CLI commands",
+    )
+    spam_flood_start_command: str = Field(
+        default="",
+        description="CLI command sent when a spam flood episode starts (for example set repeat off)",
+    )
+    spam_flood_end_command: str = Field(
+        default="",
+        description="CLI command sent when a spam flood episode ends (for example set repeat on)",
+    )
 
 
 class BusyChannel(BaseModel):

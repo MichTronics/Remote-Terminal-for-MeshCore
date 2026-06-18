@@ -45,13 +45,21 @@ Run both the backend and `npm run dev` for hot-reloading frontend development.
 
 ## Quality Checks
 
-Run the full quality suite before proposing or handing off code changes:
+Run the full quality suite before proposing or handing off code changes that may affect the frontend:
 
 ```bash
 ./scripts/quality/all_quality.sh
 ```
 
-That runs linting, formatting, type checking, tests, and builds for both backend and frontend.
+That runs linting, formatting, type checking, tests, and a frontend build.
+
+For **backend-only** changes, you do not need `npm run build` on every pass. Use:
+
+```bash
+./scripts/quality/backend_quality.sh
+```
+
+That runs ruff, pyright, and pytest only.
 
 If you need targeted commands while iterating:
 
@@ -62,7 +70,7 @@ uv run ruff format app/ tests/
 uv run pyright app/
 PYTHONPATH=. uv run pytest tests/ -v
 
-# frontend
+# frontend (only when you changed frontend code)
 cd frontend
 npm run lint:fix
 npm run format
@@ -77,7 +85,8 @@ npm run build
 
 | Script | Purpose |
 |--------|---------|
-| `all_quality.sh` | Repo-standard gate: autofix (ruff, eslint, prettier), then pyright, pytest, vitest, and frontend build. Run before finishing any code change. |
+| `all_quality.sh` | Full repo gate: autofix (ruff, eslint, prettier), then pyright, pytest, vitest, and frontend build. Run before handoff when frontend may be affected. |
+| `backend_quality.sh` | Backend-only gate: ruff, pyright, pytest. No npm/frontend build. Use while iterating on `app/` and `tests/`. |
 | `extended_quality.sh` | `all_quality.sh` plus e2e tests and Docker build matrix. Used for release validation. |
 | `e2e.sh` | Thin wrapper that runs Playwright e2e tests from `tests/e2e/`. |
 | `docker_ci.sh` | Builds the Docker image and runs a smoke test against it. |

@@ -28,6 +28,10 @@ import {
   resolveMapPacketContactKeys,
   resolveMapPacketWaypoints,
 } from '../utils/mapPacketPath';
+import {
+  MAP_LIVE_ANIMATION_WINDOW_SEC,
+  shouldAnimateMapLivePacket,
+} from '../utils/mapLiveTraffic';
 import { MapLivePacketFeed } from './MapLivePacketFeed';
 
 interface MapViewProps {
@@ -765,6 +769,7 @@ export function MapView({
   const [particles, setParticles] = useState<MapParticle[]>([]);
   const particleIdRef = useRef(0);
   const seenObservationsRef = useRef(new Set<string>());
+  const mapLiveTrafficBootstrappedRef = useRef(false);
 
   const [historyHeadings, setHistoryHeadings] = useState<Record<string, number>>({});
 
@@ -890,6 +895,21 @@ export function MapView({
     [mapPacketPathContext]
   );
 
+  // Skip replaying the in-memory packet buffer when opening the map: mark stale
+  // observations as seen so only fresh live traffic animates.
+  useEffect(() => {
+    if (!showPackets || mapLiveTrafficBootstrappedRef.current || !rawPackets?.length) {
+      return;
+    }
+    mapLiveTrafficBootstrappedRef.current = true;
+    const cutoffSec = Date.now() / 1000 - MAP_LIVE_ANIMATION_WINDOW_SEC;
+    for (const pkt of rawPackets) {
+      if (pkt.timestamp < cutoffSec) {
+        seenObservationsRef.current.add(getRawPacketObservationKey(pkt));
+      }
+    }
+  }, [showPackets, rawPackets]);
+
   // Process new packets into particles and track discovered contacts
   useEffect(() => {
     if (!showPackets || !rawPackets?.length) return;
@@ -905,6 +925,12 @@ export function MapView({
       // Deduplicate by observation
       const obsKey = getRawPacketObservationKey(pkt);
       if (seenObservationsRef.current.has(obsKey)) continue;
+
+      const animatePacket = shouldAnimateMapLivePacket(pkt.timestamp, now);
+      if (!animatePacket) {
+        seenObservationsRef.current.add(obsKey);
+        continue;
+      }
 
       const parsed = parsePacket(pkt.data);
       if (!parsed) continue;
@@ -980,6 +1006,7 @@ export function MapView({
       setDiscoveredKeys(new Set());
       setDiscoveryMode(false);
       seenObservationsRef.current.clear();
+      mapLiveTrafficBootstrappedRef.current = false;
     }
   }, [showPackets]);
 
@@ -997,9 +1024,11 @@ export function MapView({
   // Gather unique link paths for static route lines when packet viz is on
   const routeLines = useMemo(() => {
     if (!showPackets) return [];
+    const now = Date.now();
     const seen = new Set<string>();
     const lines: { path: [number, number][]; color: string }[] = [];
     for (const p of particles) {
+      if (now - p.startedAt >= PARTICLE_LIFETIME_MS) continue;
       const key = p.path.map((w) => `${w[0]},${w[1]}`).join('|');
       if (seen.has(key)) continue;
       seen.add(key);

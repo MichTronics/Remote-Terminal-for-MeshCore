@@ -26,7 +26,7 @@ async def test_spam_flood_repeater_automation_sends_start_command(test_db):
     )
 
     with patch(
-        "app.services.spam_flood_repeater_automation.send_contact_cli_command",
+        "app.routers.server_control.send_contact_cli_command",
         new_callable=AsyncMock,
     ) as mock_send:
         mock_send.return_value = type("Resp", (), {"response": "ok"})()
@@ -49,7 +49,7 @@ async def test_spam_flood_repeater_automation_skips_when_disabled(test_db):
     )
 
     with patch(
-        "app.services.spam_flood_repeater_automation.send_contact_cli_command",
+        "app.routers.server_control.send_contact_cli_command",
         new_callable=AsyncMock,
     ) as mock_send:
         await _dispatch_spam_flood_repeater_commands("start")
@@ -70,7 +70,7 @@ async def test_spam_flood_repeater_automation_sends_end_command(test_db):
     )
 
     with patch(
-        "app.services.spam_flood_repeater_automation.send_contact_cli_command",
+        "app.routers.server_control.send_contact_cli_command",
         new_callable=AsyncMock,
     ) as mock_send:
         mock_send.return_value = type("Resp", (), {"response": "ok"})()

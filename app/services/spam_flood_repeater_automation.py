@@ -8,7 +8,6 @@ from typing import Literal
 
 from app.models import CONTACT_TYPE_REPEATER
 from app.repository import AppSettingsRepository, ContactRepository
-from app.routers.server_control import send_contact_cli_command
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +20,9 @@ def schedule_spam_flood_repeater_commands(phase: SpamFloodPhase) -> None:
 
 
 async def _dispatch_spam_flood_repeater_commands(phase: SpamFloodPhase) -> None:
+    # Deferred import avoids radio_sync → packet_processor → spam_live_tracker cycle.
+    from app.routers.server_control import send_contact_cli_command
+
     settings = await AppSettingsRepository.get()
     if not settings.spam_flood_automation_enabled:
         return

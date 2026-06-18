@@ -289,16 +289,14 @@ function makeTrackerMarkerIcon(scale = 1, heading: number | null = null): L.DivI
 
 /** Resolve geographic waypoints and discovered contact keys for map live traffic. */
 function buildMapPacketPathContext(
-  prefixIndex: Map<string, Contact[]>,
-  nameIndex: Map<string, Contact>,
+  contacts: Contact[],
   myLatLon: [number, number] | null,
   config?: RadioConfig | null
 ) {
   return {
-    prefixIndex,
-    nameIndex,
+    contacts,
+    config: config ?? null,
     myLatLon,
-    myPublicKey: config?.public_key ?? null,
   };
 }
 
@@ -899,8 +897,8 @@ export function MapView({
 
   // Resolve a parsed packet to geographic waypoints for particle/route rendering.
   const mapPacketPathContext = useMemo(
-    () => buildMapPacketPathContext(prefixIndex, nameIndex, myLatLon, config),
-    [prefixIndex, nameIndex, myLatLon, config]
+    () => buildMapPacketPathContext(contacts, myLatLon, config),
+    [contacts, myLatLon, config]
   );
 
   const resolvePacketPath = useCallback(

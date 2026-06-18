@@ -591,6 +591,60 @@ export function resolvePath(
   };
 }
 
+export function pickBestLocatedContact(
+  contacts: Contact[],
+  fromLat: number | null,
+  fromLon: number | null
+): Contact | null {
+  const withGps = contacts.filter((contact) => isValidLocation(contact.lat, contact.lon));
+  if (withGps.length === 0) {
+    return null;
+  }
+  if (withGps.length === 1 || fromLat === null || fromLon === null) {
+    return withGps[0];
+  }
+  return sortContactsByDistance(withGps, fromLat, fromLon)[0];
+}
+
+/**
+ * Build a single geographic polyline through a resolved path.
+ * Ambiguous repeater hops pick the closest GPS match to the previous waypoint.
+ */
+export function buildWaypointsFromResolvedPath(resolved: ResolvedPath): [number, number][] {
+  const waypoints: [number, number][] = [];
+  let prevLat: number | null = null;
+  let prevLon: number | null = null;
+
+  const pushWaypoint = (lat: number | null, lon: number | null) => {
+    if (!isValidLocation(lat, lon)) {
+      return;
+    }
+    const point: [number, number] = [lat!, lon!];
+    const last = waypoints[waypoints.length - 1];
+    if (last && last[0] === point[0] && last[1] === point[1]) {
+      prevLat = lat;
+      prevLon = lon;
+      return;
+    }
+    waypoints.push(point);
+    prevLat = lat;
+    prevLon = lon;
+  };
+
+  pushWaypoint(resolved.sender.lat, resolved.sender.lon);
+
+  for (const hop of resolved.hops) {
+    const best = pickBestLocatedContact(hop.matches, prevLat, prevLon);
+    if (best) {
+      pushWaypoint(best.lat, best.lon);
+    }
+  }
+
+  pushWaypoint(resolved.receiver.lat, resolved.receiver.lon);
+
+  return waypoints;
+}
+
 /**
  * Calculate total distance(s) for the path
  * Returns array for ambiguous paths, null if any segment can't be calculated

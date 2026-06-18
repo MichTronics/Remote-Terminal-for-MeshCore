@@ -1,56 +1,163 @@
 import { PayloadType } from '@michaelhart/meshcore-decoder';
 
-import type { Contact, RawPacket } from '../types';
-import { isValidLocation } from './pathUtils';
-import { dedupeConsecutive, type ParsedPacket } from './visualizerUtils';
+import type { Contact, RadioConfig, RawPacket } from '../types';
+import { getContactDisplayName } from './pubkey';
+import {
+  buildWaypointsFromResolvedPath,
+  findContactsByPrefix,
+  isValidLocation,
+  pickBestLocatedContact,
+  resolvePath,
+  type SenderInfo,
+} from './pathUtils';
+import type { ParsedPacket } from './visualizerUtils';
 
 export interface MapPacketPathContext {
-  prefixIndex: Map<string, Contact[]>;
-  nameIndex: Map<string, Contact>;
+  contacts: Contact[];
+  config: RadioConfig | null;
   myLatLon: [number, number] | null;
-  myPublicKey?: string | null;
 }
 
-function getMyPrefix(publicKey: string | null | undefined): string | null {
-  const normalized = publicKey?.trim().toLowerCase() ?? '';
-  return normalized.length > 0 ? normalized.slice(0, 12) : null;
+function pickUnambiguousOrFirst(matches: Contact[]): Contact | null {
+  if (matches.length === 0) {
+    return null;
+  }
+  if (matches.length === 1) {
+    return matches[0];
+  }
+  const withGps = matches.filter((contact) => isValidLocation(contact.lat, contact.lon));
+  return withGps[0] ?? matches[0];
 }
 
-function resolveHopToGps(hopToken: string, prefixIndex: Map<string, Contact[]>): Contact | null {
-  const matches = prefixIndex.get(hopToken.toLowerCase());
-  if (!matches || matches.length !== 1) return null;
-  const contact = matches[0];
-  return isValidLocation(contact.lat, contact.lon) ? contact : null;
+function pathBytesToRoute(pathBytes: string[]): { path: string; hopCount: number } | null {
+  if (pathBytes.length === 0) {
+    return null;
+  }
+  return {
+    path: pathBytes.map((token) => token.replace(/\s/g, '').toUpperCase()).join(''),
+    hopCount: pathBytes.length,
+  };
 }
 
-function resolveNameToGps(name: string, nameIndex: Map<string, Contact>): Contact | null {
-  const contact = nameIndex.get(name);
-  if (!contact) return null;
-  return isValidLocation(contact.lat, contact.lon) ? contact : null;
+function effectiveRadioConfig(
+  config: RadioConfig | null,
+  myLatLon: [number, number] | null
+): RadioConfig | null {
+  if (!config) {
+    return null;
+  }
+  if (myLatLon && !isValidLocation(config.lat, config.lon)) {
+    return { ...config, lat: myLatLon[0], lon: myLatLon[1] };
+  }
+  return config;
 }
 
-function resolvePubkeyToGps(pubkey: string, prefixIndex: Map<string, Contact[]>): Contact | null {
-  const prefix = pubkey.slice(0, 12).toLowerCase();
-  const matches = prefixIndex.get(prefix);
-  if (!matches || matches.length !== 1) return null;
-  const contact = matches[0];
-  return isValidLocation(contact.lat, contact.lon) ? contact : null;
+function buildSenderInfo(
+  parsed: ParsedPacket,
+  packet: RawPacket | null | undefined,
+  contacts: Contact[],
+  config: RadioConfig | null
+): SenderInfo {
+  const configHashMode = config?.path_hash_mode ?? null;
+
+  if (parsed.payloadType === PayloadType.Advert && parsed.advertPubkey) {
+    const prefix = parsed.advertPubkey.slice(0, 12);
+    const contact = pickUnambiguousOrFirst(findContactsByPrefix(prefix, contacts, false));
+    return {
+      name: contact
+        ? getContactDisplayName(contact.name, contact.public_key, contact.last_advert)
+        : prefix.toUpperCase(),
+      publicKeyOrPrefix: parsed.advertPubkey,
+      lat: contact?.lat ?? null,
+      lon: contact?.lon ?? null,
+      pathHashMode: contact?.direct_path_hash_mode ?? configHashMode,
+    };
+  }
+
+  if (parsed.payloadType === PayloadType.AnonRequest && parsed.anonRequestPubkey) {
+    const prefix = parsed.anonRequestPubkey.slice(0, 12);
+    const contact = pickUnambiguousOrFirst(findContactsByPrefix(prefix, contacts, false));
+    return {
+      name: contact
+        ? getContactDisplayName(contact.name, contact.public_key, contact.last_advert)
+        : prefix.toUpperCase(),
+      publicKeyOrPrefix: parsed.anonRequestPubkey,
+      lat: contact?.lat ?? null,
+      lon: contact?.lon ?? null,
+      pathHashMode: contact?.direct_path_hash_mode ?? configHashMode,
+    };
+  }
+
+  if (parsed.payloadType === PayloadType.GroupText) {
+    const senderName = parsed.groupTextSender || packet?.decrypted_info?.sender;
+    if (senderName) {
+      const contact = contacts.find((entry) => entry.name === senderName) ?? null;
+      return {
+        name: senderName,
+        publicKeyOrPrefix: contact?.public_key ?? senderName,
+        lat: contact?.lat ?? null,
+        lon: contact?.lon ?? null,
+        pathHashMode: contact?.direct_path_hash_mode ?? configHashMode,
+      };
+    }
+  }
+
+  if (parsed.srcHash) {
+    const myPrefix = config?.public_key?.slice(0, 12).toLowerCase();
+    if (
+      parsed.payloadType === PayloadType.TextMessage &&
+      myPrefix &&
+      parsed.srcHash.toLowerCase() === myPrefix
+    ) {
+      return {
+        name: config?.name || 'Me',
+        publicKeyOrPrefix: config!.public_key,
+        lat: config?.lat ?? null,
+        lon: config?.lon ?? null,
+        pathHashMode: configHashMode,
+      };
+    }
+
+    const repeatersOnly =
+      parsed.payloadType === PayloadType.Request ||
+      parsed.payloadType === PayloadType.Response;
+    const contact = pickUnambiguousOrFirst(
+      findContactsByPrefix(parsed.srcHash, contacts, repeatersOnly)
+    );
+    return {
+      name: contact
+        ? getContactDisplayName(contact.name, contact.public_key, contact.last_advert)
+        : parsed.srcHash.toUpperCase(),
+      publicKeyOrPrefix: parsed.srcHash,
+      lat: contact?.lat ?? null,
+      lon: contact?.lon ?? null,
+      pathHashMode: contact?.direct_path_hash_mode ?? configHashMode,
+    };
+  }
+
+  return {
+    name: 'Unknown',
+    publicKeyOrPrefix: '??',
+    lat: null,
+    lon: null,
+    pathHashMode: configHashMode,
+  };
 }
 
-function pushContactWaypoint(
-  waypoints: [number, number][],
-  contact: Contact | null
-): void {
-  if (!contact) return;
-  waypoints.push([contact.lat!, contact.lon!]);
-}
-
-function pushLatLonWaypoint(
-  waypoints: [number, number][],
-  latLon: [number, number] | null
-): void {
-  if (!latLon) return;
-  waypoints.push(latLon);
+function buildResolvedPathFromParsed(
+  parsed: ParsedPacket,
+  context: MapPacketPathContext,
+  packet?: RawPacket | null
+) {
+  const route = pathBytesToRoute(parsed.pathBytes);
+  const sender = buildSenderInfo(parsed, packet, context.contacts, context.config);
+  return resolvePath(
+    route?.path ?? '',
+    sender,
+    context.contacts,
+    effectiveRadioConfig(context.config, context.myLatLon),
+    route?.hopCount ?? 0
+  );
 }
 
 /** Resolve geographic waypoints for map particle/route rendering. */
@@ -59,65 +166,10 @@ export function resolveMapPacketWaypoints(
   context: MapPacketPathContext,
   packet?: RawPacket | null
 ): [number, number][] | null {
-  const { prefixIndex, nameIndex, myLatLon, myPublicKey } = context;
-  const myPrefix = getMyPrefix(myPublicKey);
-  const waypoints: [number, number][] = [];
-
-  const isDm = parsed.payloadType === PayloadType.TextMessage;
-  const isOutgoingDm =
-    isDm && !!myPrefix && parsed.srcHash?.toLowerCase() === myPrefix;
-
-  if (parsed.payloadType === PayloadType.Advert && parsed.advertPubkey) {
-    pushContactWaypoint(waypoints, resolvePubkeyToGps(parsed.advertPubkey, prefixIndex));
-  } else if (parsed.payloadType === PayloadType.AnonRequest && parsed.anonRequestPubkey) {
-    pushContactWaypoint(waypoints, resolvePubkeyToGps(parsed.anonRequestPubkey, prefixIndex));
-  } else if (isDm && parsed.srcHash) {
-    if (isOutgoingDm) {
-      pushLatLonWaypoint(waypoints, myLatLon);
-    } else {
-      pushContactWaypoint(waypoints, resolveHopToGps(parsed.srcHash, prefixIndex));
-    }
-  } else if (parsed.payloadType === PayloadType.GroupText) {
-    const senderName = parsed.groupTextSender || packet?.decrypted_info?.sender;
-    if (senderName) {
-      pushContactWaypoint(waypoints, resolveNameToGps(senderName, nameIndex));
-    }
-  } else if (
-    (parsed.payloadType === PayloadType.Request ||
-      parsed.payloadType === PayloadType.Response) &&
-    parsed.srcHash
-  ) {
-    pushContactWaypoint(waypoints, resolveHopToGps(parsed.srcHash, prefixIndex));
-  }
-
-  for (const hop of parsed.pathBytes) {
-    pushContactWaypoint(waypoints, resolveHopToGps(hop, prefixIndex));
-  }
-
-  if (isDm && parsed.dstHash) {
-    if (myPrefix && parsed.dstHash.toLowerCase() === myPrefix) {
-      pushLatLonWaypoint(waypoints, myLatLon);
-    } else if (isOutgoingDm) {
-      pushContactWaypoint(waypoints, resolveHopToGps(parsed.dstHash, prefixIndex));
-    } else {
-      const destination = resolveHopToGps(parsed.dstHash, prefixIndex);
-      if (destination) {
-        pushContactWaypoint(waypoints, destination);
-      } else if (waypoints.length > 0) {
-        pushLatLonWaypoint(waypoints, myLatLon);
-      }
-    }
-  } else if (waypoints.length > 0) {
-    pushLatLonWaypoint(waypoints, myLatLon);
-  }
-
-  const deduped = dedupeConsecutive(waypoints.map((waypoint) => `${waypoint[0]},${waypoint[1]}`));
-  if (deduped.length < 2) return null;
-
-  return deduped.map((value) => {
-    const [lat, lon] = value.split(',').map(Number);
-    return [lat, lon] as [number, number];
-  });
+  const waypoints = buildWaypointsFromResolvedPath(
+    buildResolvedPathFromParsed(parsed, context, packet)
+  );
+  return waypoints.length >= 2 ? waypoints : null;
 }
 
 /** Collect public keys of unambiguously resolved GPS-bearing contacts from a parsed packet. */
@@ -127,48 +179,38 @@ export function resolveMapPacketContactKeys(
   packet?: RawPacket | null
 ): Set<string> {
   const keys = new Set<string>();
-  const { prefixIndex, nameIndex, myLatLon, myPublicKey } = context;
-  const myPrefix = getMyPrefix(myPublicKey);
+  const resolved = buildResolvedPathFromParsed(parsed, context, packet);
 
-  const addContact = (contact: Contact | null) => {
-    if (contact) keys.add(contact.public_key);
+  const addContact = (contact: Contact | null | undefined) => {
+    if (contact && isValidLocation(contact.lat, contact.lon)) {
+      keys.add(contact.public_key);
+    }
   };
 
-  if (parsed.advertPubkey) {
-    addContact(resolvePubkeyToGps(parsed.advertPubkey, prefixIndex));
-  }
-
-  if (parsed.anonRequestPubkey) {
-    addContact(resolvePubkeyToGps(parsed.anonRequestPubkey, prefixIndex));
-  }
-
-  if (parsed.srcHash) {
-    if (
-      parsed.payloadType === PayloadType.TextMessage &&
-      myPrefix &&
-      parsed.srcHash.toLowerCase() === myPrefix
-    ) {
-      if (myPublicKey) keys.add(myPublicKey.toLowerCase());
-    } else {
-      addContact(resolveHopToGps(parsed.srcHash, prefixIndex));
+  if (isValidLocation(resolved.sender.lat, resolved.sender.lon)) {
+    const senderMatches = findContactsByPrefix(
+      resolved.sender.prefix,
+      context.contacts,
+      false
+    );
+    if (senderMatches.length === 1) {
+      addContact(senderMatches[0]);
     }
   }
 
-  const senderName = parsed.groupTextSender || packet?.decrypted_info?.sender;
-  if (senderName) {
-    addContact(resolveNameToGps(senderName, nameIndex));
+  let prevLat = resolved.sender.lat;
+  let prevLon = resolved.sender.lon;
+  for (const hop of resolved.hops) {
+    const best = pickBestLocatedContact(hop.matches, prevLat, prevLon);
+    addContact(best);
+    if (best && isValidLocation(best.lat, best.lon)) {
+      prevLat = best.lat;
+      prevLon = best.lon;
+    }
   }
 
-  for (const hop of parsed.pathBytes) {
-    addContact(resolveHopToGps(hop, prefixIndex));
-  }
-
-  if (myLatLon && myPublicKey) {
-    keys.add(myPublicKey.toLowerCase());
-  }
-
-  if (parsed.dstHash) {
-    addContact(resolveHopToGps(parsed.dstHash, prefixIndex));
+  if (resolved.receiver.publicKey && isValidLocation(resolved.receiver.lat, resolved.receiver.lon)) {
+    keys.add(resolved.receiver.publicKey.toLowerCase());
   }
 
   return keys;

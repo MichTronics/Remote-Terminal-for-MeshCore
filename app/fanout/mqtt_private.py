@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from app.fanout.base import FanoutModule
 from app.fanout.mqtt import MqttPublisher, _build_message_topic, _build_raw_packet_topic
+from app.services.spam_gateway_filter import should_skip_mqtt_raw_packet_broadcast
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,8 @@ class MqttPrivateModule(FanoutModule):
 
     async def on_raw(self, data: dict) -> None:
         if not self._publisher.connected or self._publisher._settings is None:
+            return
+        if should_skip_mqtt_raw_packet_broadcast(data):
             return
         prefix = self.config.get("topic_prefix", "meshcore")
         topic = _build_raw_packet_topic(prefix, data)

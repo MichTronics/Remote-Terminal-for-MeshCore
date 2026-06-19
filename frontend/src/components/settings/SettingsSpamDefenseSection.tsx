@@ -185,7 +185,8 @@ export function SettingsSpamDefenseSection({
           />
           <p className="text-[0.8125rem] text-muted-foreground">
             Comma-separated full public keys for internet/MQTT gateway repeaters stripped from RF
-            paths before clustering.
+            paths before clustering. Packets whose path ends on one of these hops are not relayed
+            to MQTT bridges.
           </p>
         </div>
 

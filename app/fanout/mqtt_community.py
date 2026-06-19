@@ -10,6 +10,7 @@ from typing import Any
 
 from app.fanout.base import FanoutModule
 from app.fanout.community_mqtt import CommunityMqttPublisher, _format_raw_packet
+from app.services.spam_gateway_filter import should_skip_mqtt_raw_packet_broadcast
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,8 @@ async def _publish_community_packet(
     data: dict[str, Any],
 ) -> None:
     """Format and publish a raw packet to the community broker."""
+    if should_skip_mqtt_raw_packet_broadcast(data):
+        return
     try:
         from app.keystore import get_public_key
         from app.services.radio_runtime import radio_runtime as radio_manager

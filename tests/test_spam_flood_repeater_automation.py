@@ -9,7 +9,10 @@ import pytest
 from app.models import ContactUpsert
 from app.repository import ContactRepository
 from app.repository.settings import AppSettingsRepository
-from app.services.spam_flood_repeater_automation import _dispatch_spam_flood_repeater_commands
+from app.services.spam_flood_repeater_automation import (
+    DEFAULT_COMMAND_ATTEMPTS,
+    _dispatch_spam_flood_repeater_commands,
+)
 
 
 @pytest.mark.asyncio
@@ -25,14 +28,20 @@ async def test_spam_flood_repeater_automation_sends_start_command(test_db):
         spam_flood_end_command="set repeat on",
     )
 
-    with patch(
-        "app.routers.server_control.send_contact_cli_command",
-        new_callable=AsyncMock,
-    ) as mock_send:
+    with (
+        patch(
+            "app.routers.server_control.send_contact_cli_command",
+            new_callable=AsyncMock,
+        ) as mock_send,
+        patch(
+            "app.services.spam_flood_repeater_automation.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+    ):
         mock_send.return_value = type("Resp", (), {"response": "ok"})()
         await _dispatch_spam_flood_repeater_commands("start")
 
-    mock_send.assert_awaited_once()
+    assert mock_send.await_count == DEFAULT_COMMAND_ATTEMPTS
     assert mock_send.await_args.args[1] == "set repeat off"
 
 
@@ -69,12 +78,18 @@ async def test_spam_flood_repeater_automation_sends_end_command(test_db):
         spam_flood_end_command="set repeat on",
     )
 
-    with patch(
-        "app.routers.server_control.send_contact_cli_command",
-        new_callable=AsyncMock,
-    ) as mock_send:
+    with (
+        patch(
+            "app.routers.server_control.send_contact_cli_command",
+            new_callable=AsyncMock,
+        ) as mock_send,
+        patch(
+            "app.services.spam_flood_repeater_automation.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+    ):
         mock_send.return_value = type("Resp", (), {"response": "ok"})()
         await _dispatch_spam_flood_repeater_commands("end")
 
-    mock_send.assert_awaited_once()
+    assert mock_send.await_count == DEFAULT_COMMAND_ATTEMPTS
     assert mock_send.await_args.args[1] == "set repeat on"

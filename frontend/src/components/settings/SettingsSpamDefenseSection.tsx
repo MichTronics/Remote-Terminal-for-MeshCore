@@ -329,9 +329,10 @@ export function SettingsSpamDefenseSection({
         <div>
           <h3 className="text-base font-semibold tracking-tight">Spam Flood Repeater Commands</h3>
           <p className="mt-1 text-[0.8125rem] text-muted-foreground">
-            When the live spam tracker starts a flood episode, RemoteTerm can send a CLI command to
-            selected favorite repeaters. When the episode ends (including the post-flood hold window),
-            it sends the restore command. Your radio node must be connected and each repeater must
+            When the live spam tracker starts a flood episode, RemoteTerm sends the configured CLI
+            command to selected favorite repeaters twice (5 seconds apart) so a lost packet in
+            flood traffic is less likely to block the command. When the episode ends (including the
+            post-flood hold window), it sends the restore command the same way. Your radio node must be connected and each repeater must
             accept your CLI access — you need to be on that repeater&apos;s ACL with sufficient
             permission (typically read-write or admin). Log in from the repeater dashboard first if
             privileged commands are required.

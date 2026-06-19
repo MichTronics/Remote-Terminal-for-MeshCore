@@ -102,6 +102,8 @@ class SpamLiveTracker:
     _episode_last_clusters: list[SpamFloodCluster] = field(default_factory=list, init=False)
     _episode_packet_records: list[_PacketRecord] = field(default_factory=list, init=False)
     _episode_peak_clusters: dict[str, SpamFloodCluster] = field(default_factory=dict, init=False)
+    _episode_open: bool = field(default=False, init=False)
+    _repeater_automation_armed: bool = field(default=False, init=False)
 
     def reload_gateway_pubkeys(self) -> None:
         self._gateway_pubkeys = _gateway_pubkeys_from_configured(self.spam_gateway_keys)
@@ -599,13 +601,34 @@ class SpamLiveTracker:
             return
 
         self._episode_db_id = episode_id
-        self._episode_started_at = started_at
         self._episode_baseline = baseline
-        self._episode_total_packets = 1
         self._episode_peak_window = self._trigger_window_count(current_time)
         self._episode_last_clusters = []
+        if not self._episode_packet_records:
+            self._episode_packet_records = []
         self._episode_peak_clusters = {}
+
+    def _open_flood_episode(self, current_time: float) -> None:
+        """Arm repeater automation and begin episode tracking once per flood."""
+        if self._episode_open:
+            return
+        self._episode_open = True
+        self._repeater_automation_armed = True
+        self._episode_started_at = int(self._detected_at or current_time)
+        self._episode_total_packets = 1
         schedule_spam_flood_repeater_commands("start")
+
+    def _reset_episode_state(self) -> None:
+        self._episode_open = False
+        self._repeater_automation_armed = False
+        self._episode_db_id = None
+        self._episode_total_packets = 0
+        self._episode_peak_window = 0
+        self._episode_baseline = None
+        self._episode_started_at = None
+        self._episode_last_clusters = []
+        self._episode_packet_records = []
+        self._episode_peak_clusters = {}
 
     def _schedule_episode_progress(self) -> None:
         if self._episode_db_id is None:
@@ -631,8 +654,9 @@ class SpamLiveTracker:
             logger.exception("Failed to update spam flood episode %s", self._episode_db_id)
 
     async def _end_episode(self, current_time: float) -> None:
-        if self._episode_db_id is None:
+        if not self._episode_open:
             return
+
         episode_id = self._episode_db_id
         started_at = self._episode_started_at or int(current_time)
         ended_at = int(current_time)
@@ -649,43 +673,39 @@ class SpamLiveTracker:
             final_clusters = self._apply_report_limit_models(self._episode_last_clusters)
         else:
             final_clusters = []
+
         try:
-            if is_fluke_episode(
-                total_packets=total_packets,
-                duration_secs=duration_secs,
-                max_packets=self.fluke_max_packets,
-                max_duration_secs=self.fluke_max_duration_secs,
-            ):
-                deleted = await SpamFloodEpisodeRepository.delete(episode_id)
-                if deleted:
-                    logger.info(
-                        "Discarded fluke spam flood episode %s (%d packets in %ds)",
-                        episode_id,
-                        total_packets,
-                        duration_secs,
-                    )
-            else:
-                await SpamFloodEpisodeRepository.finalize(
-                    episode_id=episode_id,
-                    started_at=started_at,
-                    ended_at=ended_at,
+            if episode_id is not None:
+                if is_fluke_episode(
                     total_packets=total_packets,
-                    peak_packets_per_window=self._episode_peak_window,
-                    baseline_packets_per_window=self._episode_baseline,
-                    clusters=final_clusters,
-                )
+                    duration_secs=duration_secs,
+                    max_packets=self.fluke_max_packets,
+                    max_duration_secs=self.fluke_max_duration_secs,
+                ):
+                    deleted = await SpamFloodEpisodeRepository.delete(episode_id)
+                    if deleted:
+                        logger.info(
+                            "Discarded fluke spam flood episode %s (%d packets in %ds)",
+                            episode_id,
+                            total_packets,
+                            duration_secs,
+                        )
+                else:
+                    await SpamFloodEpisodeRepository.finalize(
+                        episode_id=episode_id,
+                        started_at=started_at,
+                        ended_at=ended_at,
+                        total_packets=total_packets,
+                        peak_packets_per_window=self._episode_peak_window,
+                        baseline_packets_per_window=self._episode_baseline,
+                        clusters=final_clusters,
+                    )
         except Exception:
             logger.exception("Failed to finalize spam flood episode %s", episode_id)
         finally:
-            schedule_spam_flood_repeater_commands("end")
-            self._episode_db_id = None
-            self._episode_total_packets = 0
-            self._episode_peak_window = 0
-            self._episode_baseline = None
-            self._episode_started_at = None
-            self._episode_last_clusters = []
-            self._episode_packet_records = []
-            self._episode_peak_clusters = {}
+            if self._repeater_automation_armed:
+                schedule_spam_flood_repeater_commands("end")
+            self._reset_episode_state()
 
     async def observe_and_maybe_alert(
         self,
@@ -697,21 +717,24 @@ class SpamLiveTracker:
         """Observe a DM path and return enriched status when an alert should fire."""
         current_time = float(observed_at if observed_at is not None else time.time())
         was_active = self._active
-        had_db_episode = self._episode_db_id is not None
         should_broadcast = self.observe_dm_path(
             path_hex=path_hex,
             path_len=path_len,
             observed_at=observed_at,
         )
 
-        if self._active and self._episode_db_id is None:
-            await self._start_episode(current_time)
-        elif self._active and had_db_episode:
-            self._episode_total_packets += 1
-            self._episode_peak_window = max(
-                self._episode_peak_window,
-                self._trigger_window_count(current_time),
-            )
+        if self._active:
+            if not self._episode_open:
+                self._open_flood_episode(current_time)
+                await self._start_episode(current_time)
+            else:
+                self._episode_total_packets += 1
+                self._episode_peak_window = max(
+                    self._episode_peak_window,
+                    self._trigger_window_count(current_time),
+                )
+                if self._episode_db_id is not None:
+                    self._schedule_episode_progress()
 
         if was_active and not self._active:
             await self._end_episode(current_time)

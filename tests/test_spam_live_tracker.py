@@ -288,6 +288,28 @@ async def test_spam_live_tracker_schedules_repeater_commands_on_episode_lifecycl
 
 
 @pytest.mark.asyncio
+async def test_spam_live_tracker_sends_end_command_when_db_start_fails(test_db):
+    tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())
+    base = 1_700_000_000.0
+    with (
+        patch(
+            "app.services.spam_live_tracker.schedule_spam_flood_repeater_commands",
+        ) as mock_schedule,
+        patch(
+            "app.services.spam_live_tracker.SpamFloodEpisodeRepository.create_started",
+            side_effect=RuntimeError("db unavailable"),
+        ),
+    ):
+        await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=base)
+        await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
+        assert mock_schedule.call_args_list[0].args == ("start",)
+
+        tracker._sync_active_state(base + 40)
+        await tracker._end_episode(base + 40)
+        assert mock_schedule.call_args_list[-1].args == ("end",)
+
+
+@pytest.mark.asyncio
 async def test_spam_live_tracker_longest_route_tokens_use_max_hop_path():
     tracker = _make_tracker(packet_threshold=2, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
     await tracker.observe_and_maybe_alert(path_hex="AA11", path_len=2, observed_at=1_700_000_000)

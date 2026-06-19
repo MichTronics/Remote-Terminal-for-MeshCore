@@ -174,6 +174,17 @@ class TestUpdateSettings:
         assert result.spam_gateway_keys == "none"
         mock_refresh.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_updates_spam_fluke_history_filter_fields(self, test_db):
+        result = await update_settings(
+            AppSettingsUpdate(
+                spam_live_fluke_max_packets=35,
+                spam_live_fluke_max_duration_secs=300,
+            )
+        )
+        assert result.spam_live_fluke_max_packets == 35
+        assert result.spam_live_fluke_max_duration_secs == 300
+
 
 class TestToggleFavorite:
     @pytest.mark.asyncio

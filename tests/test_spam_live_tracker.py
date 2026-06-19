@@ -21,6 +21,8 @@ def _make_tracker(**overrides) -> SpamLiveTracker:
     tracker.cluster_min_ratio = overrides.get("cluster_min_ratio", 0.15)
     tracker.broadcast_cooldown_secs = overrides.get("broadcast_cooldown_secs", 0)
     tracker.hold_secs = overrides.get("hold_secs", 300)
+    tracker.fluke_max_packets = overrides.get("fluke_max_packets", 0)
+    tracker.fluke_max_duration_secs = overrides.get("fluke_max_duration_secs", 300)
     tracker._gateway_pubkeys = overrides.get("gateway_pubkeys", frozenset({GWNL_GATEWAY.lower()}))
     return tracker
 
@@ -362,3 +364,69 @@ async def test_spam_live_status_exposes_episode_packet_counts():
     assert status.episode_packets == 3
     assert status.episode_window_secs == 300
     assert len(status.clusters) == 1
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_discards_fluke_episode_from_history(test_db):
+    tracker = _make_tracker(
+        packet_threshold=3,
+        hold_secs=30,
+        fluke_max_packets=35,
+        fluke_max_duration_secs=300,
+        gateway_pubkeys=frozenset(),
+    )
+    base = 1_700_000_000.0
+    with patch(
+        "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+        new_callable=AsyncMock,
+        return_value=1.0,
+    ):
+        for offset in range(3):
+            await tracker.observe_and_maybe_alert(
+                path_hex="AABB",
+                path_len=2,
+                observed_at=base + offset,
+            )
+        assert tracker._episode_db_id is not None
+        episode_id = tracker._episode_db_id
+
+        tracker._sync_active_state(base + 40)
+        await tracker._end_episode(base + 40)
+
+    assert tracker._episode_db_id is None
+    episodes = await SpamFloodEpisodeRepository.list_recent()
+    assert all(episode.id != episode_id for episode in episodes)
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_keeps_episode_when_packet_cap_reached(test_db):
+    tracker = _make_tracker(
+        packet_threshold=1,
+        hold_secs=30,
+        fluke_max_packets=35,
+        fluke_max_duration_secs=300,
+        gateway_pubkeys=frozenset(),
+    )
+    base = 1_700_000_000.0
+    with patch(
+        "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+        new_callable=AsyncMock,
+        return_value=1.0,
+    ):
+        for offset in range(35):
+            await tracker.observe_and_maybe_alert(
+                path_hex="AABB",
+                path_len=2,
+                observed_at=base + offset,
+            )
+        episode_id = tracker._episode_db_id
+        assert episode_id is not None
+
+        tracker._sync_active_state(base + 40)
+        await tracker._end_episode(base + 40)
+
+    episodes = await SpamFloodEpisodeRepository.list_recent()
+    kept = next((episode for episode in episodes if episode.id == episode_id), None)
+    assert kept is not None
+    assert kept.total_packets == 35
+    assert kept.ended_at is not None

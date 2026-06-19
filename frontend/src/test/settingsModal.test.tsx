@@ -82,6 +82,8 @@ const baseSettings: AppSettings = {
   spam_live_hold_secs: 300,
   spam_live_episode_retention_secs: 0,
   spam_live_max_report_clusters: 0,
+  spam_live_fluke_max_packets: 35,
+  spam_live_fluke_max_duration_secs: 300,
   spam_flood_automation_enabled: false,
   spam_flood_repeater_keys: [],
   spam_flood_start_command: '',

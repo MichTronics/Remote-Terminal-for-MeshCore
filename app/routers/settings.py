@@ -28,6 +28,8 @@ from app.services.spam_detection_settings import (
     SPAM_LIVE_PACKET_THRESHOLD_MIN,
     SPAM_LIVE_WINDOW_SECS_MAX,
     SPAM_LIVE_WINDOW_SECS_MIN,
+    SPAM_LIVE_FLUKE_MAX_DURATION_SECS_MAX,
+    SPAM_LIVE_FLUKE_MAX_PACKETS_MAX,
     refresh_spam_live_tracker_from_db,
 )
 
@@ -48,6 +50,8 @@ SPAM_TUNING_UPDATE_FIELDS = (
     "spam_live_hold_secs",
     "spam_live_episode_retention_secs",
     "spam_live_max_report_clusters",
+    "spam_live_fluke_max_packets",
+    "spam_live_fluke_max_duration_secs",
 )
 
 
@@ -130,6 +134,8 @@ class AppSettingsUpdate(BaseModel):
     spam_live_hold_secs: int | None = Field(default=None, ge=0, le=3600)
     spam_live_episode_retention_secs: int | None = Field(default=None, ge=0, le=3600)
     spam_live_max_report_clusters: int | None = Field(default=None, ge=0, le=100)
+    spam_live_fluke_max_packets: int | None = Field(default=None, ge=0, le=1000)
+    spam_live_fluke_max_duration_secs: int | None = Field(default=None, ge=0, le=3600)
     spam_flood_automation_enabled: bool | None = Field(
         default=None,
         description="Send configured repeater CLI commands when spam flood episodes start/end",
@@ -402,6 +408,30 @@ async def update_settings(update: AppSettingsUpdate) -> AppSettings:
                 ),
             )
         kwargs["spam_live_max_report_clusters"] = value
+
+    if update.spam_live_fluke_max_packets is not None:
+        value = update.spam_live_fluke_max_packets
+        if not 0 <= value <= SPAM_LIVE_FLUKE_MAX_PACKETS_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spam_live_fluke_max_packets must be between "
+                    f"0 and {SPAM_LIVE_FLUKE_MAX_PACKETS_MAX}"
+                ),
+            )
+        kwargs["spam_live_fluke_max_packets"] = value
+
+    if update.spam_live_fluke_max_duration_secs is not None:
+        value = update.spam_live_fluke_max_duration_secs
+        if not 0 <= value <= SPAM_LIVE_FLUKE_MAX_DURATION_SECS_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spam_live_fluke_max_duration_secs must be between "
+                    f"0 and {SPAM_LIVE_FLUKE_MAX_DURATION_SECS_MAX}"
+                ),
+            )
+        kwargs["spam_live_fluke_max_duration_secs"] = value
 
     if update.spam_flood_automation_enabled is not None:
         kwargs["spam_flood_automation_enabled"] = update.spam_flood_automation_enabled

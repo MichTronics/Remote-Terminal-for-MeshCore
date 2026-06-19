@@ -50,6 +50,7 @@ class AppSettingsRepository:
                    spam_live_cluster_min_ratio, spam_live_broadcast_cooldown_secs,
                    spam_live_hold_secs, spam_live_episode_retention_secs,
                    spam_live_max_report_clusters,
+                   spam_live_fluke_max_packets, spam_live_fluke_max_duration_secs,
                    spam_flood_automation_enabled, spam_flood_repeater_keys,
                    spam_flood_start_command, spam_flood_end_command
             FROM app_settings WHERE id = 1
@@ -208,6 +209,16 @@ class AppSettingsRepository:
         except (KeyError, TypeError, ValueError):
             spam_live_max_report_clusters = 0
 
+        try:
+            spam_live_fluke_max_packets = int(row["spam_live_fluke_max_packets"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_fluke_max_packets = 35
+
+        try:
+            spam_live_fluke_max_duration_secs = int(row["spam_live_fluke_max_duration_secs"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_fluke_max_duration_secs = 300
+
         return AppSettings(
             max_radio_contacts=row["max_radio_contacts"],
             auto_decrypt_dm_on_advert=bool(row["auto_decrypt_dm_on_advert"]),
@@ -232,6 +243,8 @@ class AppSettingsRepository:
             spam_live_hold_secs=spam_live_hold_secs,
             spam_live_episode_retention_secs=spam_live_episode_retention_secs,
             spam_live_max_report_clusters=spam_live_max_report_clusters,
+            spam_live_fluke_max_packets=spam_live_fluke_max_packets,
+            spam_live_fluke_max_duration_secs=spam_live_fluke_max_duration_secs,
             spam_flood_automation_enabled=spam_flood_automation_enabled,
             spam_flood_repeater_keys=spam_flood_repeater_keys,
             spam_flood_start_command=spam_flood_start_command,
@@ -265,6 +278,8 @@ class AppSettingsRepository:
         spam_live_hold_secs: int | None = None,
         spam_live_episode_retention_secs: int | None = None,
         spam_live_max_report_clusters: int | None = None,
+        spam_live_fluke_max_packets: int | None = None,
+        spam_live_fluke_max_duration_secs: int | None = None,
         spam_flood_automation_enabled: bool | None = None,
         spam_flood_repeater_keys: list[str] | None = None,
         spam_flood_start_command: str | None = None,
@@ -370,6 +385,14 @@ class AppSettingsRepository:
             updates.append("spam_live_max_report_clusters = ?")
             params.append(spam_live_max_report_clusters)
 
+        if spam_live_fluke_max_packets is not None:
+            updates.append("spam_live_fluke_max_packets = ?")
+            params.append(spam_live_fluke_max_packets)
+
+        if spam_live_fluke_max_duration_secs is not None:
+            updates.append("spam_live_fluke_max_duration_secs = ?")
+            params.append(spam_live_fluke_max_duration_secs)
+
         if spam_flood_automation_enabled is not None:
             updates.append("spam_flood_automation_enabled = ?")
             params.append(1 if spam_flood_automation_enabled else 0)
@@ -425,6 +448,8 @@ class AppSettingsRepository:
         spam_live_hold_secs: int | None = None,
         spam_live_episode_retention_secs: int | None = None,
         spam_live_max_report_clusters: int | None = None,
+        spam_live_fluke_max_packets: int | None = None,
+        spam_live_fluke_max_duration_secs: int | None = None,
         spam_flood_automation_enabled: bool | None = None,
         spam_flood_repeater_keys: list[str] | None = None,
         spam_flood_start_command: str | None = None,
@@ -457,6 +482,8 @@ class AppSettingsRepository:
                 spam_live_hold_secs=spam_live_hold_secs,
                 spam_live_episode_retention_secs=spam_live_episode_retention_secs,
                 spam_live_max_report_clusters=spam_live_max_report_clusters,
+                spam_live_fluke_max_packets=spam_live_fluke_max_packets,
+                spam_live_fluke_max_duration_secs=spam_live_fluke_max_duration_secs,
                 spam_flood_automation_enabled=spam_flood_automation_enabled,
                 spam_flood_repeater_keys=spam_flood_repeater_keys,
                 spam_flood_start_command=spam_flood_start_command,

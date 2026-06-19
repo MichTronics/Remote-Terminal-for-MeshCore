@@ -68,6 +68,24 @@ class Settings(BaseSettings):
             "0 means no limit (all qualifying ingress clusters)."
         ),
     )
+    spam_live_fluke_max_packets: int = Field(
+        default=35,
+        ge=0,
+        le=1000,
+        description=(
+            "Ended flood episodes with fewer total DM path packets are dropped from history. "
+            "0 disables the fluke filter."
+        ),
+    )
+    spam_live_fluke_max_duration_secs: int = Field(
+        default=300,
+        ge=0,
+        le=3600,
+        description=(
+            "Only episodes ending within this many seconds can be discarded as flukes. "
+            "0 means duration is not considered."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_transport_exclusivity(self) -> "Settings":

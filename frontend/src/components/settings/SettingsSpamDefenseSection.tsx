@@ -45,6 +45,12 @@ export function SettingsSpamDefenseSection({
   const [maxReportClusters, setMaxReportClusters] = useState(
     String(appSettings.spam_live_max_report_clusters ?? 0)
   );
+  const [flukeMaxPackets, setFlukeMaxPackets] = useState(
+    String(appSettings.spam_live_fluke_max_packets ?? 35)
+  );
+  const [flukeMaxDurationSecs, setFlukeMaxDurationSecs] = useState(
+    String(appSettings.spam_live_fluke_max_duration_secs ?? 300)
+  );
 
   const [enabled, setEnabled] = useState(appSettings.spam_flood_automation_enabled);
   const [selectedKeys, setSelectedKeys] = useState<string[]>(
@@ -63,6 +69,8 @@ export function SettingsSpamDefenseSection({
     setHoldSecs(String(appSettings.spam_live_hold_secs ?? 300));
     setEpisodeRetentionSecs(String(appSettings.spam_live_episode_retention_secs ?? 0));
     setMaxReportClusters(String(appSettings.spam_live_max_report_clusters ?? 0));
+    setFlukeMaxPackets(String(appSettings.spam_live_fluke_max_packets ?? 35));
+    setFlukeMaxDurationSecs(String(appSettings.spam_live_fluke_max_duration_secs ?? 300));
     setEnabled(appSettings.spam_flood_automation_enabled);
     setSelectedKeys(appSettings.spam_flood_repeater_keys ?? []);
     setStartCommand(appSettings.spam_flood_start_command ?? '');
@@ -98,6 +106,18 @@ export function SettingsSpamDefenseSection({
     const parsedHold = parseBoundedInt(holdSecs, 'Hold window', 0, 3600);
     const parsedRetention = parseBoundedInt(episodeRetentionSecs, 'Episode retention', 0, 3600);
     const parsedMaxClusters = parseBoundedInt(maxReportClusters, 'Max report clusters', 0, 100);
+    const parsedFlukeMaxPackets = parseBoundedInt(
+      flukeMaxPackets,
+      'Fluke history packet cap',
+      0,
+      1000
+    );
+    const parsedFlukeMaxDuration = parseBoundedInt(
+      flukeMaxDurationSecs,
+      'Fluke history duration',
+      0,
+      3600
+    );
     const parsedRatio = Number.parseFloat(clusterMinRatio);
     if (
       parsedWindow === null ||
@@ -105,7 +125,9 @@ export function SettingsSpamDefenseSection({
       parsedCooldown === null ||
       parsedHold === null ||
       parsedRetention === null ||
-      parsedMaxClusters === null
+      parsedMaxClusters === null ||
+      parsedFlukeMaxPackets === null ||
+      parsedFlukeMaxDuration === null
     ) {
       return;
     }
@@ -125,6 +147,8 @@ export function SettingsSpamDefenseSection({
         spam_live_hold_secs: parsedHold,
         spam_live_episode_retention_secs: parsedRetention,
         spam_live_max_report_clusters: parsedMaxClusters,
+        spam_live_fluke_max_packets: parsedFlukeMaxPackets,
+        spam_live_fluke_max_duration_secs: parsedFlukeMaxDuration,
         spam_flood_automation_enabled: enabled,
         spam_flood_repeater_keys: selectedKeys,
         spam_flood_start_command: startCommand.trim(),
@@ -256,6 +280,47 @@ export function SettingsSpamDefenseSection({
             <p className="text-[0.8125rem] text-muted-foreground">
               Maximum hotspot candidates shown in live UI and history. 0 means unlimited.
             </p>
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-md border border-border bg-muted/10 p-3">
+          <div>
+            <h4 className="text-sm font-semibold">Fluke history filter</h4>
+            <p className="mt-1 text-[0.8125rem] text-muted-foreground">
+              Live flood alarms still fire on short bursts. When an episode ends, it is dropped from
+              Flood Alert History if it stayed below the packet cap and ended within the duration
+              window.
+            </p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="spam-fluke-max-packets">History packet cap</Label>
+              <Input
+                id="spam-fluke-max-packets"
+                type="number"
+                min={0}
+                max={1000}
+                value={flukeMaxPackets}
+                onChange={(event) => setFlukeMaxPackets(event.target.value)}
+              />
+              <p className="text-[0.8125rem] text-muted-foreground">
+                Episodes with fewer total DM paths are not saved to history. 0 disables this filter.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="spam-fluke-max-duration">History duration window (seconds)</Label>
+              <Input
+                id="spam-fluke-max-duration"
+                type="number"
+                min={0}
+                max={3600}
+                value={flukeMaxDurationSecs}
+                onChange={(event) => setFlukeMaxDurationSecs(event.target.value)}
+              />
+              <p className="text-[0.8125rem] text-muted-foreground">
+                Only episodes ending within this window can be discarded (default 300 = 5 minutes).
+              </p>
+            </div>
           </div>
         </div>
 

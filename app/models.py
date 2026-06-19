@@ -1230,6 +1230,18 @@ class AppSettings(BaseModel):
         le=100,
         description="Maximum hotspot candidates in live UI and persisted reports (0 = unlimited).",
     )
+    spam_live_fluke_max_packets: int = Field(
+        default=35,
+        ge=0,
+        le=1000,
+        description="Drop ended episodes from flood history when total packets stay below this (0 = off).",
+    )
+    spam_live_fluke_max_duration_secs: int = Field(
+        default=300,
+        ge=0,
+        le=3600,
+        description="Only episodes ending within this many seconds may be discarded as flukes (0 = ignore duration).",
+    )
     spam_flood_automation_enabled: bool = Field(
         default=False,
         description="When enabled, send configured CLI commands to selected repeaters on spam flood start/end",

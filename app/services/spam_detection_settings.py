@@ -17,7 +17,26 @@ SPAM_LIVE_BROADCAST_COOLDOWN_SECS_MAX = 120
 SPAM_LIVE_HOLD_SECS_MAX = 3600
 SPAM_LIVE_EPISODE_RETENTION_SECS_MAX = 3600
 SPAM_LIVE_MAX_REPORT_CLUSTERS_MAX = 100
+SPAM_LIVE_FLUKE_MAX_PACKETS_MAX = 1000
+SPAM_LIVE_FLUKE_MAX_DURATION_SECS_MAX = 3600
 MAX_SPAM_GATEWAY_KEYS_LEN = 4096
+
+
+def is_fluke_episode(
+    *,
+    total_packets: int,
+    duration_secs: int,
+    max_packets: int,
+    max_duration_secs: int,
+) -> bool:
+    """Return True when an ended episode should be dropped from flood alert history."""
+    if max_packets <= 0:
+        return False
+    if total_packets >= max_packets:
+        return False
+    if max_duration_secs > 0 and duration_secs > max_duration_secs:
+        return False
+    return True
 
 
 def tracker_kwargs_from_app_settings(settings: AppSettings) -> dict[str, object]:
@@ -31,6 +50,8 @@ def tracker_kwargs_from_app_settings(settings: AppSettings) -> dict[str, object]
         "hold_secs": float(settings.spam_live_hold_secs),
         "episode_retention_secs": float(settings.spam_live_episode_retention_secs),
         "max_report_clusters": settings.spam_live_max_report_clusters,
+        "fluke_max_packets": settings.spam_live_fluke_max_packets,
+        "fluke_max_duration_secs": settings.spam_live_fluke_max_duration_secs,
     }
 
 

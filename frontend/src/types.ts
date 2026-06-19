@@ -559,6 +559,8 @@ export interface AppSettings {
   spam_live_hold_secs: number;
   spam_live_episode_retention_secs: number;
   spam_live_max_report_clusters: number;
+  spam_live_fluke_max_packets: number;
+  spam_live_fluke_max_duration_secs: number;
   spam_flood_automation_enabled: boolean;
   spam_flood_repeater_keys: string[];
   spam_flood_start_command: string;
@@ -584,6 +586,8 @@ export interface AppSettingsUpdate {
   spam_live_hold_secs?: number;
   spam_live_episode_retention_secs?: number;
   spam_live_max_report_clusters?: number;
+  spam_live_fluke_max_packets?: number;
+  spam_live_fluke_max_duration_secs?: number;
   spam_flood_automation_enabled?: boolean;
   spam_flood_repeater_keys?: string[];
   spam_flood_start_command?: string;

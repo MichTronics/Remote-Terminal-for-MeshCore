@@ -14,6 +14,7 @@ from app.path_utils import split_path_hex, hop_allows_prefix_name_lookup
 from app.repository.contacts import ContactRepository
 from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
 from app.services.spam_baseline import SpamBaselineService
+from app.services.spam_detection_settings import is_fluke_episode
 from app.services.spam_flood_repeater_automation import schedule_spam_flood_repeater_commands
 from app.services.spam_path_analysis import (
     cluster_confidence,
@@ -80,6 +81,8 @@ class SpamLiveTracker:
     hold_secs: float = 300.0
     episode_retention_secs: float = 0.0
     max_report_clusters: int = 0
+    fluke_max_packets: int = 35
+    fluke_max_duration_secs: int = 300
 
     _history: deque[_PacketRecord] = field(default_factory=deque, init=False)
     _gateway_pubkeys: frozenset[str] = field(
@@ -114,6 +117,8 @@ class SpamLiveTracker:
         hold_secs: float,
         episode_retention_secs: float,
         max_report_clusters: int,
+        fluke_max_packets: int,
+        fluke_max_duration_secs: int,
     ) -> None:
         """Apply live tuning from app_settings without restarting the process."""
         gateway_changed = spam_gateway_keys != self.spam_gateway_keys
@@ -125,6 +130,8 @@ class SpamLiveTracker:
         self.hold_secs = float(hold_secs)
         self.episode_retention_secs = float(episode_retention_secs)
         self.max_report_clusters = int(max_report_clusters)
+        self.fluke_max_packets = int(fluke_max_packets)
+        self.fluke_max_duration_secs = int(fluke_max_duration_secs)
         if gateway_changed:
             self.reload_gateway_pubkeys()
 
@@ -628,6 +635,9 @@ class SpamLiveTracker:
             return
         episode_id = self._episode_db_id
         started_at = self._episode_started_at or int(current_time)
+        ended_at = int(current_time)
+        duration_secs = max(0, ended_at - started_at)
+        total_packets = self._episode_total_packets
         cluster_raw = self._cluster_packets_from(self._episode_packet_records)
         if cluster_raw:
             final_clusters = await self._enrich_clusters(cluster_raw)
@@ -640,15 +650,30 @@ class SpamLiveTracker:
         else:
             final_clusters = []
         try:
-            await SpamFloodEpisodeRepository.finalize(
-                episode_id=episode_id,
-                started_at=started_at,
-                ended_at=int(current_time),
-                total_packets=self._episode_total_packets,
-                peak_packets_per_window=self._episode_peak_window,
-                baseline_packets_per_window=self._episode_baseline,
-                clusters=final_clusters,
-            )
+            if is_fluke_episode(
+                total_packets=total_packets,
+                duration_secs=duration_secs,
+                max_packets=self.fluke_max_packets,
+                max_duration_secs=self.fluke_max_duration_secs,
+            ):
+                deleted = await SpamFloodEpisodeRepository.delete(episode_id)
+                if deleted:
+                    logger.info(
+                        "Discarded fluke spam flood episode %s (%d packets in %ds)",
+                        episode_id,
+                        total_packets,
+                        duration_secs,
+                    )
+            else:
+                await SpamFloodEpisodeRepository.finalize(
+                    episode_id=episode_id,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    total_packets=total_packets,
+                    peak_packets_per_window=self._episode_peak_window,
+                    baseline_packets_per_window=self._episode_baseline,
+                    clusters=final_clusters,
+                )
         except Exception:
             logger.exception("Failed to finalize spam flood episode %s", episode_id)
         finally:

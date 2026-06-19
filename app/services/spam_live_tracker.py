@@ -9,7 +9,6 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.config import settings
 from app.models import SpamFloodCluster, SpamLiveStatus
 from app.path_utils import split_path_hex, hop_allows_prefix_name_lookup
 from app.repository.contacts import ContactRepository
@@ -52,8 +51,8 @@ def _parse_gateway_pubkeys(raw: str) -> frozenset[str]:
     return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
-def _effective_gateway_pubkeys() -> frozenset[str]:
-    configured = settings.spam_gateway_keys.strip()
+def _gateway_pubkeys_from_configured(configured: str) -> frozenset[str]:
+    configured = configured.strip()
     if configured.lower() == "none":
         return frozenset()
     if configured:
@@ -73,19 +72,20 @@ class _PacketRecord:
 class SpamLiveTracker:
     """Rolling-window DM flood tracker with multi-ingress clustering."""
 
-    window_secs: float = field(default_factory=lambda: float(settings.spam_live_window_secs))
-    packet_threshold: int = field(default_factory=lambda: settings.spam_live_packet_threshold)
-    cluster_min_ratio: float = field(default_factory=lambda: settings.spam_live_cluster_min_ratio)
-    broadcast_cooldown_secs: float = field(
-        default_factory=lambda: float(settings.spam_live_broadcast_cooldown_secs)
-    )
-    hold_secs: float = field(default_factory=lambda: float(settings.spam_live_hold_secs))
-    episode_retention_secs: float = field(
-        default_factory=lambda: float(settings.spam_live_episode_retention_secs)
-    )
+    spam_gateway_keys: str = ""
+    window_secs: float = 30.0
+    packet_threshold: int = 15
+    cluster_min_ratio: float = 0.15
+    broadcast_cooldown_secs: float = 10.0
+    hold_secs: float = 300.0
+    episode_retention_secs: float = 0.0
+    max_report_clusters: int = 0
 
     _history: deque[_PacketRecord] = field(default_factory=deque, init=False)
-    _gateway_pubkeys: frozenset[str] = field(default_factory=_effective_gateway_pubkeys, init=False)
+    _gateway_pubkeys: frozenset[str] = field(
+        default_factory=lambda: frozenset(_DEFAULT_GATEWAY_PUBKEYS),
+        init=False,
+    )
     _active: bool = field(default=False, init=False)
     _detected_at: float | None = field(default=None, init=False)
     _hold_until: float | None = field(default=None, init=False)
@@ -101,7 +101,32 @@ class SpamLiveTracker:
     _episode_peak_clusters: dict[str, SpamFloodCluster] = field(default_factory=dict, init=False)
 
     def reload_gateway_pubkeys(self) -> None:
-        self._gateway_pubkeys = _effective_gateway_pubkeys()
+        self._gateway_pubkeys = _gateway_pubkeys_from_configured(self.spam_gateway_keys)
+
+    def apply_runtime_settings(
+        self,
+        *,
+        spam_gateway_keys: str,
+        window_secs: float,
+        packet_threshold: int,
+        cluster_min_ratio: float,
+        broadcast_cooldown_secs: float,
+        hold_secs: float,
+        episode_retention_secs: float,
+        max_report_clusters: int,
+    ) -> None:
+        """Apply live tuning from app_settings without restarting the process."""
+        gateway_changed = spam_gateway_keys != self.spam_gateway_keys
+        self.spam_gateway_keys = spam_gateway_keys
+        self.window_secs = float(window_secs)
+        self.packet_threshold = int(packet_threshold)
+        self.cluster_min_ratio = float(cluster_min_ratio)
+        self.broadcast_cooldown_secs = float(broadcast_cooldown_secs)
+        self.hold_secs = float(hold_secs)
+        self.episode_retention_secs = float(episode_retention_secs)
+        self.max_report_clusters = int(max_report_clusters)
+        if gateway_changed:
+            self.reload_gateway_pubkeys()
 
     def _is_gateway_hop(self, hop: str) -> bool:
         if not self._gateway_pubkeys:
@@ -205,10 +230,9 @@ class SpamLiveTracker:
         return max(1, int(self.packet_threshold * self.cluster_min_ratio))
 
     def _max_report_clusters(self) -> int | None:
-        limit = settings.spam_live_max_report_clusters
-        if limit <= 0:
+        if self.max_report_clusters <= 0:
             return None
-        return limit
+        return self.max_report_clusters
 
     def _apply_report_limit(self, clusters: list[dict[str, Any]]) -> list[dict[str, Any]]:
         limit = self._max_report_clusters()

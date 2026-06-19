@@ -15,6 +15,21 @@ from app.telemetry_interval import (
     legal_interval_options,
     next_run_timestamp_utc,
 )
+from app.services.spam_detection_settings import (
+    MAX_SPAM_GATEWAY_KEYS_LEN,
+    SPAM_LIVE_BROADCAST_COOLDOWN_SECS_MAX,
+    SPAM_LIVE_BROADCAST_COOLDOWN_SECS_MIN,
+    SPAM_LIVE_CLUSTER_MIN_RATIO_MAX,
+    SPAM_LIVE_CLUSTER_MIN_RATIO_MIN,
+    SPAM_LIVE_EPISODE_RETENTION_SECS_MAX,
+    SPAM_LIVE_HOLD_SECS_MAX,
+    SPAM_LIVE_MAX_REPORT_CLUSTERS_MAX,
+    SPAM_LIVE_PACKET_THRESHOLD_MAX,
+    SPAM_LIVE_PACKET_THRESHOLD_MIN,
+    SPAM_LIVE_WINDOW_SECS_MAX,
+    SPAM_LIVE_WINDOW_SECS_MIN,
+    refresh_spam_live_tracker_from_db,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -23,6 +38,17 @@ MAX_TRACKED_TELEMETRY_REPEATERS = 8
 MAX_TRACKED_TELEMETRY_CONTACTS = 8
 MAX_SPAM_FLOOD_REPEATERS = 16
 MAX_SPAM_FLOOD_COMMAND_LEN = 256
+
+SPAM_TUNING_UPDATE_FIELDS = (
+    "spam_gateway_keys",
+    "spam_live_window_secs",
+    "spam_live_packet_threshold",
+    "spam_live_cluster_min_ratio",
+    "spam_live_broadcast_cooldown_secs",
+    "spam_live_hold_secs",
+    "spam_live_episode_retention_secs",
+    "spam_live_max_report_clusters",
+)
 
 
 class AppSettingsUpdate(BaseModel):
@@ -89,6 +115,21 @@ class AppSettingsUpdate(BaseModel):
         le=168,
         description="Retention period for tracker location history in hours (1-168, default 12)",
     )
+    spam_gateway_keys: str | None = Field(
+        default=None,
+        max_length=MAX_SPAM_GATEWAY_KEYS_LEN,
+        description=(
+            "Comma-separated gateway repeater public keys for RF path stripping. "
+            "Empty uses built-in defaults; 'none' disables stripping."
+        ),
+    )
+    spam_live_window_secs: int | None = Field(default=None, ge=5, le=300)
+    spam_live_packet_threshold: int | None = Field(default=None, ge=5, le=1000)
+    spam_live_cluster_min_ratio: float | None = Field(default=None, ge=0.05, le=1.0)
+    spam_live_broadcast_cooldown_secs: int | None = Field(default=None, ge=1, le=120)
+    spam_live_hold_secs: int | None = Field(default=None, ge=0, le=3600)
+    spam_live_episode_retention_secs: int | None = Field(default=None, ge=0, le=3600)
+    spam_live_max_report_clusters: int | None = Field(default=None, ge=0, le=100)
     spam_flood_automation_enabled: bool | None = Field(
         default=None,
         description="Send configured repeater CLI commands when spam flood episodes start/end",
@@ -278,6 +319,90 @@ async def update_settings(update: AppSettingsUpdate) -> AppSettings:
         logger.info("Updating tracker_history_hours to %d", update.tracker_history_hours)
         kwargs["tracker_history_hours"] = update.tracker_history_hours
 
+    if update.spam_gateway_keys is not None:
+        kwargs["spam_gateway_keys"] = update.spam_gateway_keys.strip()
+
+    if update.spam_live_window_secs is not None:
+        value = update.spam_live_window_secs
+        if not SPAM_LIVE_WINDOW_SECS_MIN <= value <= SPAM_LIVE_WINDOW_SECS_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spam_live_window_secs must be between "
+                    f"{SPAM_LIVE_WINDOW_SECS_MIN} and {SPAM_LIVE_WINDOW_SECS_MAX}"
+                ),
+            )
+        kwargs["spam_live_window_secs"] = value
+
+    if update.spam_live_packet_threshold is not None:
+        value = update.spam_live_packet_threshold
+        if not SPAM_LIVE_PACKET_THRESHOLD_MIN <= value <= SPAM_LIVE_PACKET_THRESHOLD_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spam_live_packet_threshold must be between "
+                    f"{SPAM_LIVE_PACKET_THRESHOLD_MIN} and {SPAM_LIVE_PACKET_THRESHOLD_MAX}"
+                ),
+            )
+        kwargs["spam_live_packet_threshold"] = value
+
+    if update.spam_live_cluster_min_ratio is not None:
+        value = update.spam_live_cluster_min_ratio
+        if not SPAM_LIVE_CLUSTER_MIN_RATIO_MIN <= value <= SPAM_LIVE_CLUSTER_MIN_RATIO_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spam_live_cluster_min_ratio must be between "
+                    f"{SPAM_LIVE_CLUSTER_MIN_RATIO_MIN} and {SPAM_LIVE_CLUSTER_MIN_RATIO_MAX}"
+                ),
+            )
+        kwargs["spam_live_cluster_min_ratio"] = value
+
+    if update.spam_live_broadcast_cooldown_secs is not None:
+        value = update.spam_live_broadcast_cooldown_secs
+        if not SPAM_LIVE_BROADCAST_COOLDOWN_SECS_MIN <= value <= SPAM_LIVE_BROADCAST_COOLDOWN_SECS_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spam_live_broadcast_cooldown_secs must be between "
+                    f"{SPAM_LIVE_BROADCAST_COOLDOWN_SECS_MIN} and {SPAM_LIVE_BROADCAST_COOLDOWN_SECS_MAX}"
+                ),
+            )
+        kwargs["spam_live_broadcast_cooldown_secs"] = value
+
+    if update.spam_live_hold_secs is not None:
+        value = update.spam_live_hold_secs
+        if not 0 <= value <= SPAM_LIVE_HOLD_SECS_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=f"spam_live_hold_secs must be between 0 and {SPAM_LIVE_HOLD_SECS_MAX}",
+            )
+        kwargs["spam_live_hold_secs"] = value
+
+    if update.spam_live_episode_retention_secs is not None:
+        value = update.spam_live_episode_retention_secs
+        if not 0 <= value <= SPAM_LIVE_EPISODE_RETENTION_SECS_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spam_live_episode_retention_secs must be between "
+                    f"0 and {SPAM_LIVE_EPISODE_RETENTION_SECS_MAX}"
+                ),
+            )
+        kwargs["spam_live_episode_retention_secs"] = value
+
+    if update.spam_live_max_report_clusters is not None:
+        value = update.spam_live_max_report_clusters
+        if not 0 <= value <= SPAM_LIVE_MAX_REPORT_CLUSTERS_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"spam_live_max_report_clusters must be between "
+                    f"0 and {SPAM_LIVE_MAX_REPORT_CLUSTERS_MAX}"
+                ),
+            )
+        kwargs["spam_live_max_report_clusters"] = value
+
     if update.spam_flood_automation_enabled is not None:
         kwargs["spam_flood_automation_enabled"] = update.spam_flood_automation_enabled
 
@@ -314,7 +439,11 @@ async def update_settings(update: AppSettingsUpdate) -> AppSettings:
         flood_scope_changed = True
 
     if kwargs:
+        spam_tuning_changed = any(getattr(update, field) is not None for field in SPAM_TUNING_UPDATE_FIELDS)
         result = await AppSettingsRepository.update(**kwargs)
+
+        if spam_tuning_changed:
+            await refresh_spam_live_tracker_from_db()
 
         # Apply flood scope to radio immediately if changed
         if flood_scope_changed:

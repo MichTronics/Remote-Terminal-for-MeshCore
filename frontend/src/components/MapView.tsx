@@ -211,7 +211,7 @@ const MAX_MAP_PARTICLES = 200;
 const ROUTE_LINE_OPACITY = 0.32;
 const ROUTE_LINE_WEIGHT = 2;
 const TRACKER_MARKER_COLOR = '#c4b5fd';
-const TRACKER_MARKER_SCALE = 1.3;
+const TRACKER_MARKER_SCALE = 1.6;
 
 // --- Helpers ---
 

@@ -151,6 +151,29 @@ class TestUpdateSettings:
         assert result.spam_flood_start_command == "set repeat off"
         assert result.spam_flood_end_command == "set repeat on"
 
+    @pytest.mark.asyncio
+    async def test_updates_spam_detection_tuning_fields(self, test_db):
+        with patch(
+            "app.routers.settings.refresh_spam_live_tracker_from_db",
+            new_callable=AsyncMock,
+        ) as mock_refresh:
+            result = await update_settings(
+                AppSettingsUpdate(
+                    spam_live_window_secs=45,
+                    spam_live_packet_threshold=20,
+                    spam_live_cluster_min_ratio=0.2,
+                    spam_live_hold_secs=120,
+                    spam_gateway_keys="none",
+                )
+            )
+
+        assert result.spam_live_window_secs == 45
+        assert result.spam_live_packet_threshold == 20
+        assert result.spam_live_cluster_min_ratio == 0.2
+        assert result.spam_live_hold_secs == 120
+        assert result.spam_gateway_keys == "none"
+        mock_refresh.assert_awaited_once()
+
 
 class TestToggleFavorite:
     @pytest.mark.asyncio

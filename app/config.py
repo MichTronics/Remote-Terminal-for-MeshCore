@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     skip_post_connect_sync: bool = False
     basic_auth_username: str = ""
     basic_auth_password: str = ""
+    # Live spam-detection tuning is persisted in app_settings (Settings > Spam Defense).
+    # These env vars seed the database on migration and apply on fresh installs only.
     spam_gateway_keys: str = Field(
         default="",
         description=(

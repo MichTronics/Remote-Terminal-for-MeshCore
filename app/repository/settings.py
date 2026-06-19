@@ -45,6 +45,11 @@ class AppSettingsRepository:
                    auto_resend_channel,
                    telemetry_interval_hours, telemetry_routed_hourly,
                    tracker_history_hours,
+                   spam_gateway_keys,
+                   spam_live_window_secs, spam_live_packet_threshold,
+                   spam_live_cluster_min_ratio, spam_live_broadcast_cooldown_secs,
+                   spam_live_hold_secs, spam_live_episode_retention_secs,
+                   spam_live_max_report_clusters,
                    spam_flood_automation_enabled, spam_flood_repeater_keys,
                    spam_flood_start_command, spam_flood_end_command
             FROM app_settings WHERE id = 1
@@ -163,6 +168,46 @@ class AppSettingsRepository:
         except (KeyError, TypeError):
             spam_flood_end_command = ""
 
+        try:
+            spam_gateway_keys = row["spam_gateway_keys"] or ""
+        except (KeyError, TypeError):
+            spam_gateway_keys = ""
+
+        try:
+            spam_live_window_secs = int(row["spam_live_window_secs"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_window_secs = 30
+
+        try:
+            spam_live_packet_threshold = int(row["spam_live_packet_threshold"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_packet_threshold = 15
+
+        try:
+            spam_live_cluster_min_ratio = float(row["spam_live_cluster_min_ratio"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_cluster_min_ratio = 0.15
+
+        try:
+            spam_live_broadcast_cooldown_secs = int(row["spam_live_broadcast_cooldown_secs"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_broadcast_cooldown_secs = 10
+
+        try:
+            spam_live_hold_secs = int(row["spam_live_hold_secs"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_hold_secs = 300
+
+        try:
+            spam_live_episode_retention_secs = int(row["spam_live_episode_retention_secs"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_episode_retention_secs = 0
+
+        try:
+            spam_live_max_report_clusters = int(row["spam_live_max_report_clusters"])
+        except (KeyError, TypeError, ValueError):
+            spam_live_max_report_clusters = 0
+
         return AppSettings(
             max_radio_contacts=row["max_radio_contacts"],
             auto_decrypt_dm_on_advert=bool(row["auto_decrypt_dm_on_advert"]),
@@ -179,6 +224,14 @@ class AppSettingsRepository:
             telemetry_interval_hours=telemetry_interval_hours,
             telemetry_routed_hourly=telemetry_routed_hourly,
             tracker_history_hours=tracker_history_hours,
+            spam_gateway_keys=spam_gateway_keys,
+            spam_live_window_secs=spam_live_window_secs,
+            spam_live_packet_threshold=spam_live_packet_threshold,
+            spam_live_cluster_min_ratio=spam_live_cluster_min_ratio,
+            spam_live_broadcast_cooldown_secs=spam_live_broadcast_cooldown_secs,
+            spam_live_hold_secs=spam_live_hold_secs,
+            spam_live_episode_retention_secs=spam_live_episode_retention_secs,
+            spam_live_max_report_clusters=spam_live_max_report_clusters,
             spam_flood_automation_enabled=spam_flood_automation_enabled,
             spam_flood_repeater_keys=spam_flood_repeater_keys,
             spam_flood_start_command=spam_flood_start_command,
@@ -204,6 +257,14 @@ class AppSettingsRepository:
         telemetry_interval_hours: int | None = None,
         telemetry_routed_hourly: bool | None = None,
         tracker_history_hours: int | None = None,
+        spam_gateway_keys: str | None = None,
+        spam_live_window_secs: int | None = None,
+        spam_live_packet_threshold: int | None = None,
+        spam_live_cluster_min_ratio: float | None = None,
+        spam_live_broadcast_cooldown_secs: int | None = None,
+        spam_live_hold_secs: int | None = None,
+        spam_live_episode_retention_secs: int | None = None,
+        spam_live_max_report_clusters: int | None = None,
         spam_flood_automation_enabled: bool | None = None,
         spam_flood_repeater_keys: list[str] | None = None,
         spam_flood_start_command: str | None = None,
@@ -277,6 +338,38 @@ class AppSettingsRepository:
             updates.append("tracker_history_hours = ?")
             params.append(tracker_history_hours)
 
+        if spam_gateway_keys is not None:
+            updates.append("spam_gateway_keys = ?")
+            params.append(spam_gateway_keys)
+
+        if spam_live_window_secs is not None:
+            updates.append("spam_live_window_secs = ?")
+            params.append(spam_live_window_secs)
+
+        if spam_live_packet_threshold is not None:
+            updates.append("spam_live_packet_threshold = ?")
+            params.append(spam_live_packet_threshold)
+
+        if spam_live_cluster_min_ratio is not None:
+            updates.append("spam_live_cluster_min_ratio = ?")
+            params.append(spam_live_cluster_min_ratio)
+
+        if spam_live_broadcast_cooldown_secs is not None:
+            updates.append("spam_live_broadcast_cooldown_secs = ?")
+            params.append(spam_live_broadcast_cooldown_secs)
+
+        if spam_live_hold_secs is not None:
+            updates.append("spam_live_hold_secs = ?")
+            params.append(spam_live_hold_secs)
+
+        if spam_live_episode_retention_secs is not None:
+            updates.append("spam_live_episode_retention_secs = ?")
+            params.append(spam_live_episode_retention_secs)
+
+        if spam_live_max_report_clusters is not None:
+            updates.append("spam_live_max_report_clusters = ?")
+            params.append(spam_live_max_report_clusters)
+
         if spam_flood_automation_enabled is not None:
             updates.append("spam_flood_automation_enabled = ?")
             params.append(1 if spam_flood_automation_enabled else 0)
@@ -324,6 +417,14 @@ class AppSettingsRepository:
         telemetry_interval_hours: int | None = None,
         telemetry_routed_hourly: bool | None = None,
         tracker_history_hours: int | None = None,
+        spam_gateway_keys: str | None = None,
+        spam_live_window_secs: int | None = None,
+        spam_live_packet_threshold: int | None = None,
+        spam_live_cluster_min_ratio: float | None = None,
+        spam_live_broadcast_cooldown_secs: int | None = None,
+        spam_live_hold_secs: int | None = None,
+        spam_live_episode_retention_secs: int | None = None,
+        spam_live_max_report_clusters: int | None = None,
         spam_flood_automation_enabled: bool | None = None,
         spam_flood_repeater_keys: list[str] | None = None,
         spam_flood_start_command: str | None = None,
@@ -348,6 +449,14 @@ class AppSettingsRepository:
                 telemetry_interval_hours=telemetry_interval_hours,
                 telemetry_routed_hourly=telemetry_routed_hourly,
                 tracker_history_hours=tracker_history_hours,
+                spam_gateway_keys=spam_gateway_keys,
+                spam_live_window_secs=spam_live_window_secs,
+                spam_live_packet_threshold=spam_live_packet_threshold,
+                spam_live_cluster_min_ratio=spam_live_cluster_min_ratio,
+                spam_live_broadcast_cooldown_secs=spam_live_broadcast_cooldown_secs,
+                spam_live_hold_secs=spam_live_hold_secs,
+                spam_live_episode_retention_secs=spam_live_episode_retention_secs,
+                spam_live_max_report_clusters=spam_live_max_report_clusters,
                 spam_flood_automation_enabled=spam_flood_automation_enabled,
                 spam_flood_repeater_keys=spam_flood_repeater_keys,
                 spam_flood_start_command=spam_flood_start_command,

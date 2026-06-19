@@ -1198,6 +1198,38 @@ class AppSettings(BaseModel):
         le=168,
         description="Tracker location history retention window in hours (1-168, default 12)",
     )
+    spam_gateway_keys: str = Field(
+        default="",
+        description=(
+            "Comma-separated full public keys for internet/MQTT gateway repeaters. "
+            "Empty uses built-in GWNL defaults. Set to 'none' to disable gateway stripping."
+        ),
+    )
+    spam_live_window_secs: int = Field(default=30, ge=5, le=300)
+    spam_live_packet_threshold: int = Field(default=15, ge=5, le=1000)
+    spam_live_cluster_min_ratio: float = Field(default=0.15, ge=0.05, le=1.0)
+    spam_live_broadcast_cooldown_secs: int = Field(default=10, ge=1, le=120)
+    spam_live_hold_secs: int = Field(
+        default=300,
+        ge=0,
+        le=3600,
+        description="Keep flood alarms active this many seconds after the last above-threshold observation.",
+    )
+    spam_live_episode_retention_secs: int = Field(
+        default=0,
+        ge=0,
+        le=3600,
+        description=(
+            "How long to retain flood episode packets for clustering while an alarm is active. "
+            "0 means match hold_secs."
+        ),
+    )
+    spam_live_max_report_clusters: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Maximum hotspot candidates in live UI and persisted reports (0 = unlimited).",
+    )
     spam_flood_automation_enabled: bool = Field(
         default=False,
         description="When enabled, send configured CLI commands to selected repeaters on spam flood start/end",

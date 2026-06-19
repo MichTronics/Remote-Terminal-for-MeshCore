@@ -131,6 +131,10 @@ async def lifespan(app: FastAPI):
     if closed:
         logger.info("Closed %d in-progress spam flood episode(s) from prior run", closed)
 
+    from app.services.spam_detection_settings import refresh_spam_live_tracker_from_db
+
+    await refresh_spam_live_tracker_from_db()
+
     await start_radio_stats_sampling()
 
     # Start periodic location history cleanup task

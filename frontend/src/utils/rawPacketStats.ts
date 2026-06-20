@@ -26,6 +26,7 @@ export const KNOWN_PAYLOAD_TYPES = [
   'Path',
   'Control',
   'Atlas',
+  'GroupData',
   'Location',
   'Unknown',
 ] as const;

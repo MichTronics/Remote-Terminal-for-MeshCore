@@ -2,6 +2,7 @@ import { PayloadType } from '@michaelhart/meshcore-decoder';
 
 import type { Contact, RadioConfig, RawPacket } from '../types';
 import { getContactDisplayName } from './pubkey';
+import { isTrackerDecryptedPacket, trackerNodeIdFromPacket } from './trackerPacket';
 import {
   buildWaypointsFromResolvedPath,
   findContactsByPrefix,
@@ -100,6 +101,29 @@ function buildSenderInfo(
         pathHashMode: contact?.direct_path_hash_mode ?? configHashMode,
       };
     }
+  }
+
+  if (
+    packet &&
+    (parsed.payloadType === PayloadType.GroupData || packet.payload_type === 'GROUP_DATA') &&
+    isTrackerDecryptedPacket(packet)
+  ) {
+    const nodeId = trackerNodeIdFromPacket(packet);
+    const contact = nodeId
+      ? pickUnambiguousOrFirst(findContactsByPrefix(nodeId, contacts, false))
+      : null;
+    return {
+      name:
+        packet.decrypted_info?.sender ||
+        (contact
+          ? getContactDisplayName(contact.name, contact.public_key, contact.last_advert)
+          : nodeId?.toUpperCase()) ||
+        'Tracker',
+      publicKeyOrPrefix: contact?.public_key ?? nodeId ?? '??',
+      lat: contact?.lat ?? null,
+      lon: contact?.lon ?? null,
+      pathHashMode: contact?.direct_path_hash_mode ?? configHashMode,
+    };
   }
 
   if (parsed.srcHash) {

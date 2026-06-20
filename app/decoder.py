@@ -281,6 +281,87 @@ def try_decrypt_packet_with_channel_key(
     return decrypt_group_text(packet_info.payload, channel_key)
 
 
+GROUP_DATA_TRACKER_TYPE = 0x0200
+
+
+def _channel_hash_byte(channel_key: bytes) -> bytes:
+    """First byte of SHA256 over the active channel secret prefix."""
+    channel_secret = channel_key + bytes(16)
+    key_len = 16 if channel_secret[16:] == b"\x00" * 16 else 32
+    return hashlib.sha256(channel_secret[:key_len]).digest()[:1]
+
+
+def decrypt_group_data(
+    payload: bytes,
+    channel_key: bytes,
+    *,
+    expected_data_type: int | None = None,
+) -> bytes | None:
+    """
+    Decrypt a GROUP_DATA payload using a channel key.
+
+    Wire format matches GroupText: channel_hash (1) + cipher_mac (2) + AES-ECB ciphertext.
+    Plaintext layout: data_type (2 LE) + data_len (1) + data bytes (+ PKCS-style pad to 16).
+    """
+    if len(payload) < 3:
+        return None
+
+    if payload[:1] != _channel_hash_byte(channel_key):
+        return None
+
+    cipher_mac = payload[1:3]
+    ciphertext = payload[3:]
+
+    if len(ciphertext) == 0 or len(ciphertext) % 16 != 0:
+        return None
+
+    channel_secret = channel_key + bytes(16)
+    calculated_mac = hmac.new(channel_secret, ciphertext, hashlib.sha256).digest()[:2]
+    if calculated_mac != cipher_mac:
+        return None
+
+    try:
+        cipher = AES.new(channel_key, AES.MODE_ECB)
+        decrypted = cipher.decrypt(ciphertext)
+    except Exception as e:
+        logger.debug("AES decryption failed: %s", e)
+        return None
+
+    if len(decrypted) < 3:
+        return None
+
+    data_type = decrypted[0] | (decrypted[1] << 8)
+    data_len = decrypted[2]
+
+    if expected_data_type is not None and data_type != expected_data_type:
+        return None
+
+    if len(decrypted) < 3 + data_len:
+        return None
+
+    return decrypted[3 : 3 + data_len]
+
+
+def decrypt_trackers_location(payload: bytes) -> ParsedLocation | None:
+    """Decrypt a Trackers-channel GROUP_DATA payload and parse the embedded MCL1 body."""
+    from app.channel_constants import TRACKERS_CHANNEL_KEY
+
+    try:
+        channel_key = bytes.fromhex(TRACKERS_CHANNEL_KEY)
+    except ValueError:
+        return None
+
+    mcl1_body = decrypt_group_data(
+        payload,
+        channel_key,
+        expected_data_type=GROUP_DATA_TRACKER_TYPE,
+    )
+    if mcl1_body is None:
+        return None
+
+    return parse_location(mcl1_body)
+
+
 def get_packet_payload_type(raw_packet: bytes) -> PayloadType | None:
     """Get the payload type of a raw packet without full parsing."""
     if len(raw_packet) < 1:

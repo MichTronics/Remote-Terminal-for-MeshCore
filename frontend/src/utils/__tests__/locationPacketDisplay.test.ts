@@ -1,23 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { KNOWN_PAYLOAD_TYPES } from '../rawPacketStats';
+import { decodePacketSummary } from '../rawPacketInspector';
+import { isTrackerDecryptedPacket } from '../trackerPacket';
 import type { RawPacket } from '../../types';
 
-describe('Location packet display support', () => {
-  it('includes Location in known payload types', () => {
-    expect(KNOWN_PAYLOAD_TYPES).toContain('Location');
+describe('Tracker packet display support', () => {
+  it('includes GroupData in known payload types', () => {
+    expect(KNOWN_PAYLOAD_TYPES).toContain('GroupData');
   });
 
   it('includes Atlas in known payload types', () => {
     expect(KNOWN_PAYLOAD_TYPES).toContain('Atlas');
   });
 
-  it('Location packet with decrypted_info shows readable summary', () => {
-    const mockLocationPacket: RawPacket = {
+  it('GROUP_DATA tracker packet with decrypted_info shows readable summary', () => {
+    const mockTrackerPacket: RawPacket = {
       id: 1,
       observation_id: 1,
       timestamp: 1718582400,
-      data: '0D0000000000', // Minimal hex
-      payload_type: 'LOCATION',
+      data: '190000000000',
+      payload_type: 'GROUP_DATA',
       snr: 8.5,
       rssi: -85,
       transport_codes: null,
@@ -29,6 +31,8 @@ describe('Location packet display support', () => {
         channel_key: null,
         contact_key: 'abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef567890',
         sender_timestamp: 1718582400,
+        node_id: 'abcd1234',
+        is_tracker: true,
         speed: 1.5,
         heading: 90,
         message:
@@ -36,15 +40,18 @@ describe('Location packet display support', () => {
       },
     };
 
-    // Verify the packet structure is valid
-    expect(mockLocationPacket.payload_type).toBe('LOCATION');
-    expect(mockLocationPacket.decrypted).toBe(true);
-    expect(mockLocationPacket.decrypted_info?.sender).toBe('TrackerNode');
-    expect(mockLocationPacket.decrypted_info?.message).toContain('📍');
-    expect(mockLocationPacket.decrypted_info?.message).toContain('37.774900');
-    expect(mockLocationPacket.decrypted_info?.message).toContain('-122.419400');
-    expect(mockLocationPacket.decrypted_info?.speed).toBe(1.5);
-    expect(mockLocationPacket.decrypted_info?.heading).toBe(90);
+    expect(isTrackerDecryptedPacket(mockTrackerPacket)).toBe(true);
+    expect(mockTrackerPacket.payload_type).toBe('GROUP_DATA');
+    expect(mockTrackerPacket.decrypted).toBe(true);
+    expect(mockTrackerPacket.decrypted_info?.sender).toBe('TrackerNode');
+    expect(mockTrackerPacket.decrypted_info?.message).toContain('📍');
+    expect(mockTrackerPacket.decrypted_info?.message).toContain('37.774900');
+    expect(mockTrackerPacket.decrypted_info?.message).toContain('-122.419400');
+    expect(mockTrackerPacket.decrypted_info?.speed).toBe(1.5);
+    expect(mockTrackerPacket.decrypted_info?.heading).toBe(90);
+
+    const summary = decodePacketSummary(mockTrackerPacket);
+    expect(summary.summary).toContain('Tracker from TrackerNode');
   });
 
   it('ATLAS packet type is recognized', () => {

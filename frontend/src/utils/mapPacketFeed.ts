@@ -9,6 +9,7 @@ import {
 import type { Channel, Contact, RawPacket } from '../types';
 import { createDecoderOptions } from './rawPacketInspector';
 import { getContactDisplayName } from './pubkey';
+import { isTrackerDecryptedPacket, trackerNodeIdFromPacket } from './trackerPacket';
 import { getPacketLabel, PARTICLE_COLOR_MAP } from './visualizerUtils';
 import { getRawPacketObservationKey } from './rawPacketIdentity';
 
@@ -22,6 +23,7 @@ const PACKET_TYPE_LABELS: Record<string, string> = {
   TR: 'TRACE',
   RQ: 'REQUEST',
   RS: 'RESPONSE',
+  TK: 'TRACKER',
   '?':'UNKNOWN',
 };
 
@@ -402,6 +404,18 @@ export function formatMapPacketSenderFromDecoded(
       const payload = decoded.payload.decoded as { publicKey?: string } | null;
       return formatTokenOrContact(payload?.publicKey, indexes);
     }
+    case PayloadType.GroupData: {
+      if (isTrackerDecryptedPacket(packet)) {
+        const nodeId = trackerNodeIdFromPacket(packet);
+        if (nodeId) {
+          return formatTokenOrContact(nodeId, indexes);
+        }
+        if (packet.decrypted_info?.sender) {
+          return packet.decrypted_info.sender;
+        }
+      }
+      break;
+    }
     default: {
       if (packet.decrypted_info?.sender) {
         return formatTokenOrContact(packet.decrypted_info.sender, indexes);
@@ -417,6 +431,9 @@ export function formatMapPacketSenderFromDecoded(
 }
 
 function payloadTypeLabel(packet: RawPacket, decoded: DecodedPacket | null): string {
+  if (isTrackerDecryptedPacket(packet)) {
+    return 'TRACKER';
+  }
   if (decoded?.isValid) {
     return PACKET_TYPE_LABELS[getPacketLabel(decoded.payloadType)] ?? 'UNKNOWN';
   }
@@ -430,6 +447,9 @@ function payloadTypeLabel(packet: RawPacket, decoded: DecodedPacket | null): str
 }
 
 function payloadTypeColor(packet: RawPacket, decoded: DecodedPacket | null): string {
+  if (isTrackerDecryptedPacket(packet)) {
+    return '#22c55e';
+  }
   if (decoded?.isValid) {
     return PARTICLE_COLOR_MAP[getPacketLabel(decoded.payloadType)];
   }
@@ -497,7 +517,9 @@ export function buildMapPacketFeedEntry(
     }
   } else if (decodedMessage) {
     const normalizedType = packet.payload_type?.toUpperCase() ?? '';
-    if (normalizedType.includes('GROUP') || normalizedType === 'CHAN') {
+    if (isTrackerDecryptedPacket(packet)) {
+      messageBody = formatMapPacketFeedMessageBody(decodedMessage);
+    } else if (normalizedType.includes('GROUP') || normalizedType === 'CHAN') {
       channelTargetLabel =
         packet.decrypted_info?.channel_name?.trim() ??
         resolveChannelNameByKey(packet.decrypted_info?.channel_key, context.channels);

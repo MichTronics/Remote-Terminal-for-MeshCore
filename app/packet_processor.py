@@ -27,7 +27,7 @@ from app.decoder import (
     PayloadType,
     derive_public_key,
     parse_advertisement,
-    parse_location,
+    decrypt_trackers_location,
     parse_packet,
     try_decrypt_dm,
     try_decrypt_packet_with_channel_key,
@@ -154,7 +154,7 @@ def calculate_meshcore_transport_code(
     return code
 
 
-def _location_decrypted_info(
+def _tracker_decrypted_info(
     location: ParsedLocation,
     display_name: str,
     contact_key: str | None = None,
@@ -171,8 +171,10 @@ def _location_decrypted_info(
         "message": message,
         "sender_timestamp": location.timestamp,
         "contact_key": contact_key,
+        "node_id": location.node_id,
         "speed": location.speed,
         "heading": location.heading,
+        "is_tracker": True,
     }
 
 
@@ -600,9 +602,8 @@ async def process_raw_packet(
     elif payload_type == PayloadType.PATH:
         await _process_path_packet(raw_bytes, ts, packet_info)
 
-    elif payload_type == PayloadType.LOCATION:
-        # Process LOCATION tracker packets - update contact location and broadcast
-        location_result = await _process_location(
+    elif payload_type == PayloadType.GROUP_DATA:
+        location_result = await _process_group_data_tracker(
             raw_bytes, ts, packet_info, transport_codes=transport_codes, region_name=region_name
         )
         if location_result:
@@ -631,6 +632,8 @@ async def process_raw_packet(
             message=result.get("message"),
             speed=result.get("speed"),
             heading=result.get("heading"),
+            node_id=result.get("node_id"),
+            is_tracker=result.get("is_tracker"),
         )
         if result["decrypted"]
         else None,
@@ -855,32 +858,44 @@ async def _process_advertisement(
             await start_historical_dm_decryption(None, advert.public_key.lower(), advert.name)
 
 
-async def _process_location(
+async def _process_group_data_tracker(
     raw_bytes: bytes,
     timestamp: int,
     packet_info: PacketInfo | None = None,
     transport_codes: bytes | None = None,
     region_name: str | None = None,
 ) -> dict | None:
-    """
-    Process a LOCATION tracker packet (0x0D).
-
-    Extracts tracker location info and updates the contact database.
-    LOCATION packets are flood-routed with a 2-hop limit.
-    Returns decoded location info for display in the raw packet feed.
-    """
-    # Parse packet to get path info if not already provided
+    """Process Trackers-channel GROUP_DATA packets carrying encrypted MCL1 GPS bodies."""
     if packet_info is None:
         packet_info = parse_packet(raw_bytes)
     if packet_info is None:
-        logger.debug("Failed to parse LOCATION packet")
+        logger.debug("Failed to parse GROUP_DATA tracker packet")
         return None
 
-    location = parse_location(packet_info.payload)
+    location = decrypt_trackers_location(packet_info.payload)
     if not location:
-        logger.debug("Failed to parse LOCATION payload")
         return None
 
+    return await _apply_tracker_location(
+        location,
+        timestamp,
+        packet_info,
+        transport_codes=transport_codes,
+        region_name=region_name,
+        source="GROUP_DATA",
+    )
+
+
+async def _apply_tracker_location(
+    location: ParsedLocation,
+    timestamp: int,
+    packet_info: PacketInfo,
+    transport_codes: bytes | None = None,
+    region_name: str | None = None,
+    *,
+    source: str,
+) -> dict | None:
+    """Apply decoded MCL1 tracker GPS data to contacts, history, and WS events."""
     new_path_len = packet_info.path_length
     new_path_hex = packet_info.path.hex() if packet_info.path else ""
 
@@ -901,8 +916,9 @@ async def _process_location(
             transport_info += f" region={region_name}"
 
     logger.debug(
-        "Parsed LOCATION from node_id=%s: %s (lat=%.6f, lon=%.6f, alt=%dm, "
+        "Parsed %s tracker from node_id=%s: %s (lat=%.6f, lon=%.6f, alt=%dm, "
         "speed=%.1fm/s, hdg=%.1f°, sats=%d, batt=%dmV, path_len=%d%s)",
+        source,
         location.node_id,
         location.name or "(no name)",
         location.lat,
@@ -930,7 +946,8 @@ async def _process_location(
     # public key for proper contact storage. Users should see the advertisement first.
     if contact is None:
         logger.debug(
-            "No contact found for LOCATION node_id=%s, skipping (wait for advertisement)",
+            "No contact found for %s tracker node_id=%s, skipping (wait for advertisement)",
+            source,
             location.node_id,
         )
         # Still broadcast the raw location data as a "location" event for display purposes
@@ -954,7 +971,7 @@ async def _process_location(
         )
         # Return decoded info for raw packet feed display
         display_name = location.name or f"Node {location.node_id[:8]}"
-        return _location_decrypted_info(location, display_name)
+        return _tracker_decrypted_info(location, display_name)
 
     # Update the existing contact with location and tracker data
     # Use the location packet timestamp for last_seen, and preserve the contact's
@@ -1019,7 +1036,7 @@ async def _process_location(
     display_name = (
         location.name or db_contact.name if db_contact else f"Node {location.node_id[:8]}"
     )
-    return _location_decrypted_info(location, display_name, contact.public_key if contact else None)
+    return _tracker_decrypted_info(location, display_name, contact.public_key if contact else None)
 
 
 async def _process_direct_message(

@@ -8,6 +8,7 @@ import {
   inspectRawPacketWithOptions,
   type PacketByteField,
 } from '../utils/rawPacketInspector';
+import { isTrackerDecryptedPacket } from '../utils/trackerPacket';
 import { toast } from './ui/sonner';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
@@ -256,6 +257,14 @@ function getPacketContext(
   const fallbackSender = packet.decrypted_info?.sender ?? null;
   const fallbackChannel = packet.decrypted_info?.channel_name ?? null;
 
+  if (isTrackerDecryptedPacket(packet) && fallbackSender) {
+    return {
+      title: 'Tracker',
+      primary: fallbackSender,
+      secondary: 'GPS tracker (Trackers channel)',
+    };
+  }
+
   if (!inspection.decoded?.payload.decoded) {
     if (!fallbackSender && !fallbackChannel) {
       return null;
@@ -285,15 +294,6 @@ function getPacketContext(
         : fallbackSender
           ? `Sender: ${fallbackSender}`
           : null,
-    };
-  }
-
-  // LOCATION tracker packets - show tracker name and type
-  if (packet.payload_type === 'LOCATION' && fallbackSender) {
-    return {
-      title: 'Tracker',
-      primary: fallbackSender,
-      secondary: 'GPS Location Tracker',
     };
   }
 

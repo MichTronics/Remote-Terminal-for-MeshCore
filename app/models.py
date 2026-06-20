@@ -118,9 +118,9 @@ class Contact(BaseModel):
     last_contacted: int | None = None  # Last time we sent/received a message
     last_read_at: int | None = None  # Server-side read state tracking
     first_seen: int | None = None
-    is_tracker: bool = False  # True if this contact sends LOCATION packets
-    tracker_name: str | None = None  # Name from LOCATION packet
-    tracker_heading: float | None = None  # Last known heading in degrees (LOCATION packets)
+    is_tracker: bool = False  # True if this contact sends Trackers-channel GROUP_DATA GPS updates
+    tracker_name: str | None = None  # Name from decoded tracker payload
+    tracker_heading: float | None = None  # Last known heading in degrees from tracker payloads
     effective_route: ContactRoute | None = None
     effective_route_source: Literal["override", "direct", "flood"] = "flood"
     direct_route: ContactRoute | None = None
@@ -739,10 +739,16 @@ class RawPacketDecryptedInfo(BaseModel):
     sender_timestamp: int | None = None
     message: str | None = None
     speed: float | None = Field(
-        default=None, description="Tracker speed in m/s for LOCATION packets"
+        default=None, description="Tracker speed in m/s for decoded tracker payloads"
     )
     heading: float | None = Field(
-        default=None, description="Tracker heading in degrees for LOCATION packets"
+        default=None, description="Tracker heading in degrees for decoded tracker payloads"
+    )
+    node_id: str | None = Field(
+        default=None, description="First 4 bytes of tracker public key as 8-char hex"
+    )
+    is_tracker: bool | None = Field(
+        default=None, description="True when decrypted_info carries a GPS tracker MCL1 body"
     )
 
 

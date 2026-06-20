@@ -222,9 +222,15 @@ export function useRealtimeAppState({
         setContacts((prev) => mergeContactIntoList(prev, contact));
       },
       onLocation: (location: LocationPayload) => {
-        if (!location.public_key) return;
         setContacts((prev) => {
-          const idx = prev.findIndex((c) => c.public_key === location.public_key);
+          let idx = -1;
+          if (location.public_key) {
+            idx = prev.findIndex((c) => c.public_key === location.public_key);
+          }
+          if (idx < 0 && location.node_id) {
+            const nodeId = location.node_id.toLowerCase();
+            idx = prev.findIndex((c) => c.public_key.toLowerCase().startsWith(nodeId));
+          }
           if (idx < 0) return prev;
           const existing = prev[idx];
           const merged: Contact = {

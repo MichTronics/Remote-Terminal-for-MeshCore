@@ -844,7 +844,7 @@ export function MapView({
     };
   }, [showTrails]);
 
-  // Extend trails immediately when a tracker contact moves (LOCATION WS / contact upsert).
+  // Extend trails immediately when a tracker contact moves (GROUP_DATA WS / contact upsert).
   useEffect(() => {
     if (!showTrails || !trackerTrailsReadyRef.current) return;
 

@@ -28,6 +28,7 @@ import {
   type RawPacketStatsWindow,
 } from '../utils/rawPacketStats';
 import { createDecoderOptions } from '../utils/rawPacketInspector';
+import { isTrackerDecryptedPacket } from '../utils/trackerPacket';
 import { getContactDisplayName } from '../utils/pubkey';
 import { cn } from '@/lib/utils';
 
@@ -59,6 +60,9 @@ function getPacketTypeName(
   packet: RawPacket,
   decoderOptions?: ReturnType<typeof createDecoderOptions>
 ): string {
+  if (isTrackerDecryptedPacket(packet)) {
+    return 'Tracker';
+  }
   try {
     const decoded = MeshCoreDecoder.decode(packet.data, decoderOptions);
     if (!decoded.isValid) {

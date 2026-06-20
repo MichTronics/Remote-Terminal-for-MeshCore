@@ -153,7 +153,7 @@ export interface Contact {
   first_seen: number | null;
   is_tracker: boolean;
   tracker_name: string | null;
-  /** Last known heading in degrees from LOCATION packets (0 = north, clockwise). */
+  /** Last known heading in degrees from tracker GROUP_DATA packets (0 = north, clockwise). */
   tracker_heading?: number | null;
 }
 
@@ -533,6 +533,8 @@ export interface RawPacket {
     message: string | null;
     speed?: number | null;
     heading?: number | null;
+    node_id?: string | null;
+    is_tracker?: boolean | null;
   } | null;
 }
 

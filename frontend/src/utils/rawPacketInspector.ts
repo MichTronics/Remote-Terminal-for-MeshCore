@@ -9,6 +9,8 @@ import {
 } from '@michaelhart/meshcore-decoder';
 
 import type { Channel, RawPacket } from '../types';
+import { TRACKERS_CHANNEL_KEY } from './trackersChannel';
+import { isTrackerDecryptedPacket } from './trackerPacket';
 
 export interface RawPacketSummary {
   summary: string;
@@ -125,18 +127,17 @@ function createPacketField(
 
 export function createDecoderOptions(
   channels: Channel[] | null | undefined
-): DecryptionOptions | undefined {
-  const channelSecrets =
-    channels
+): DecryptionOptions {
+  const channelSecrets = [
+    TRACKERS_CHANNEL_KEY,
+    ...(channels
       ?.map((channel) => channel.key?.trim())
-      .filter((key): key is string => Boolean(key && key.length > 0)) ?? [];
-
-  if (channelSecrets.length === 0) {
-    return undefined;
-  }
+      .filter((key): key is string => Boolean(key && key.length > 0)) ?? []),
+  ];
+  const uniqueSecrets = [...new Set(channelSecrets.map((key) => key.toUpperCase()))];
 
   return {
-    keyStore: MeshCoreDecoder.createKeyStore({ channelSecrets }),
+    keyStore: MeshCoreDecoder.createKeyStore({ channelSecrets: uniqueSecrets }),
     attemptDecryption: true,
   };
 }
@@ -317,6 +318,95 @@ function generateLocationPayloadFields(
   return fields;
 }
 
+function generateTrackerDecryptedPayloadFields(
+  packet: RawPacket,
+  payloadStartByte: number
+): PacketByteField[] {
+  const info = packet.decrypted_info;
+  if (!info) {
+    return [];
+  }
+
+  const createField = (
+    id: string,
+    name: string,
+    value: string,
+    description: string,
+    index: number
+  ): PacketByteField => ({
+    id: `tracker-${id}`,
+    scope: 'payload',
+    name,
+    description,
+    value,
+    startByte: index,
+    endByte: index,
+    absoluteStartByte: payloadStartByte + index,
+    absoluteEndByte: payloadStartByte + index,
+    decryptedMessage: description,
+  });
+
+  const fields: PacketByteField[] = [];
+  let index = 0;
+
+  if (info.sender) {
+    fields.push(
+      createField('name', 'Tracker', info.sender, `Tracker name: ${info.sender}`, index++)
+    );
+  }
+  if (info.node_id) {
+    fields.push(
+      createField(
+        'node-id',
+        'Node ID',
+        info.node_id.toUpperCase(),
+        `First 4 bytes of public key: ${info.node_id.toUpperCase()}`,
+        index++
+      )
+    );
+  }
+  if (info.sender_timestamp != null) {
+    fields.push(
+      createField(
+        'timestamp',
+        'Timestamp',
+        String(info.sender_timestamp),
+        `Sent: ${formatUnixTimestamp(info.sender_timestamp)}`,
+        index++
+      )
+    );
+  }
+  if (typeof info.speed === 'number') {
+    fields.push(
+      createField(
+        'speed',
+        'Speed',
+        `${info.speed.toFixed(1)} m/s`,
+        `Speed: ${info.speed.toFixed(1)} m/s`,
+        index++
+      )
+    );
+  }
+  if (typeof info.heading === 'number') {
+    fields.push(
+      createField(
+        'heading',
+        'Heading',
+        `${info.heading.toFixed(1)}°`,
+        `Heading: ${info.heading.toFixed(1)}°`,
+        index++
+      )
+    );
+  }
+  if (info.message) {
+    fields.push(
+      createField('location', 'Location', info.message, info.message, index++)
+    );
+  }
+
+  return fields;
+}
+
 export function decodePacketSummary(
   packet: RawPacket,
   decoderOptions?: DecryptionOptions
@@ -450,15 +540,17 @@ export function decodePacketSummary(
         break;
       }
       default:
-        // Handle unknown types that may be defined server-side (e.g., LOCATION = 0x0D)
-        // Use backend payload_type name if available, or fall back to library name
-        const backendPayloadType = packet.payload_type;
-        if (backendPayloadType === 'LOCATION' && packet.decrypted_info?.sender) {
-          summary = `Location from ${packet.decrypted_info.sender}${pathStr}`;
-        } else if (backendPayloadType === 'ATLAS') {
-          summary = `Atlas${pathStr}`;
+        if (isTrackerDecryptedPacket(packet)) {
+          summary = `Tracker from ${packet.decrypted_info?.sender ?? 'unknown'}${pathStr}`;
         } else {
-          summary = `${payloadTypeName}${pathStr}`;
+          const backendPayloadType = packet.payload_type;
+          if (backendPayloadType === 'LOCATION' && packet.decrypted_info?.sender) {
+            summary = `Location from ${packet.decrypted_info.sender}${pathStr}`;
+          } else if (backendPayloadType === 'ATLAS') {
+            summary = `Atlas${pathStr}`;
+          } else {
+            summary = `${payloadTypeName}${pathStr}`;
+          }
         }
         break;
     }
@@ -527,10 +619,11 @@ export function inspectRawPacketWithOptions(
   const payloadFields =
     structure == null
       ? []
-      : packet.payload_type === 'LOCATION' && structure.payload.hex.length >= 64
-        ? // Generate custom fields for LOCATION tracker packets
-          generateLocationPayloadFields(structure.payload.hex, structure.payload.startByte)
-        : (structure.payload.segments.length > 0
+      : isTrackerDecryptedPacket(packet)
+        ? generateTrackerDecryptedPayloadFields(packet, structure.payload.startByte)
+        : packet.payload_type === 'LOCATION' && structure.payload.hex.length >= 64
+          ? generateLocationPayloadFields(structure.payload.hex, structure.payload.startByte)
+          : (structure.payload.segments.length > 0
             ? structure.payload.segments
             : structure.payload.hex.length > 0
               ? [
@@ -549,6 +642,10 @@ export function inspectRawPacketWithOptions(
           );
 
   const enrichedPayloadFields = payloadFields.map((field) => {
+    if (isTrackerDecryptedPacket(packet)) {
+      return field;
+    }
+
     if (!decoded?.isValid || field.name !== 'Ciphertext') {
       return field;
     }
@@ -596,10 +693,12 @@ export function inspectRawPacketWithOptions(
       return { ...withStructure, decryptedMessage: detailLines.join('\n') };
     }
 
-    // LOCATION tracker packets (0x0D): server-side parsing via decrypted_info
-    // Backend decodes LOCATION payload and provides formatted message
-    if (packet.payload_type === 'LOCATION' && packet.decrypted_info?.message) {
+    // Trackers GROUP_DATA: server-side MCL1 decode via decrypted_info
+    if (isTrackerDecryptedPacket(packet)) {
       const info = packet.decrypted_info;
+      if (!info?.message) {
+        return withStructure;
+      }
       const detailLines = [
         info.sender_timestamp != null
           ? `Sent (packet): ${formatUnixTimestamp(info.sender_timestamp)}`

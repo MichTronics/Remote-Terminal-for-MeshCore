@@ -1,10 +1,74 @@
 """
-Tests for LOCATION tracker packet (0x0D) parsing and processing.
+Tests for LOCATION tracker packet (0x0D) parsing and processing,
+and Trackers-channel GROUP_DATA (0x06) decryption.
 """
 
-import pytest
+import hashlib
+import hmac
 
-from app.decoder import PayloadType, parse_location
+import pytest
+from Crypto.Cipher import AES
+
+from app.channel_constants import TRACKERS_CHANNEL_KEY
+from app.decoder import (
+    GROUP_DATA_TRACKER_TYPE,
+    PayloadType,
+    decrypt_group_data,
+    decrypt_trackers_location,
+    parse_location,
+)
+
+
+def build_mcl1_payload(
+    *,
+    node_id: str = "12345678",
+    lat_micro: int = 37774900,
+    lon_micro: int = -122419400,
+    altitude: int = 50,
+    speed_cm: int = 150,
+    heading_centi: int = 9000,
+    satellites: int = 8,
+    battery_mv: int = 3700,
+    timestamp: int = 1718582400,
+    name: str | None = None,
+) -> bytes:
+    name_bytes = name.encode("utf-8") if name else b""
+    payload = bytearray(32 + len(name_bytes))
+    payload[0:4] = b"MCL1"
+    payload[4] = 1
+    payload[5] = 0
+    payload[6:10] = bytes.fromhex(node_id)
+    payload[10:14] = lat_micro.to_bytes(4, "big", signed=True)
+    payload[14:18] = lon_micro.to_bytes(4, "big", signed=True)
+    payload[18:20] = altitude.to_bytes(2, "big", signed=True)
+    payload[20:22] = speed_cm.to_bytes(2, "big", signed=False)
+    payload[22:24] = heading_centi.to_bytes(2, "big", signed=False)
+    payload[24] = satellites
+    payload[25:27] = battery_mv.to_bytes(2, "big", signed=False)
+    payload[27:31] = timestamp.to_bytes(4, "big", signed=False)
+    payload[31] = len(name_bytes)
+    if name_bytes:
+        payload[32 : 32 + len(name_bytes)] = name_bytes
+    return bytes(payload)
+
+
+def build_encrypted_trackers_group_data(mcl1_body: bytes) -> bytes:
+    channel_key = bytes.fromhex(TRACKERS_CHANNEL_KEY)
+    plain = (
+        GROUP_DATA_TRACKER_TYPE.to_bytes(2, "little")
+        + bytes([len(mcl1_body)])
+        + mcl1_body
+    )
+    pad_len = (16 - len(plain) % 16) % 16
+    if pad_len == 0:
+        pad_len = 16
+    plain += bytes(pad_len)
+
+    ciphertext = AES.new(channel_key, AES.MODE_ECB).encrypt(plain)
+    channel_secret = channel_key + bytes(16)
+    mac = hmac.new(channel_secret, ciphertext, hashlib.sha256).digest()[:2]
+    channel_hash = hashlib.sha256(channel_key).digest()[:1]
+    return channel_hash + mac + ciphertext
 
 
 def test_parse_location_basic():
@@ -225,7 +289,46 @@ def test_parse_location_name_exceeds_max():
 def test_payload_type_location_exists():
     """Test that PayloadType.LOCATION is defined."""
     assert PayloadType.LOCATION == 0x0D
+    assert PayloadType.GROUP_DATA == 0x06
     assert PayloadType.ATLAS == 0x0C
+
+
+def test_decrypt_trackers_group_data():
+    """Trackers GROUP_DATA decrypts to the embedded MCL1 body."""
+    mcl1 = build_mcl1_payload(name="TrailTracker")
+    encrypted = build_encrypted_trackers_group_data(mcl1)
+
+    inner = decrypt_group_data(
+        encrypted,
+        bytes.fromhex(TRACKERS_CHANNEL_KEY),
+        expected_data_type=GROUP_DATA_TRACKER_TYPE,
+    )
+    assert inner == mcl1
+
+    location = decrypt_trackers_location(encrypted)
+    assert location is not None
+    assert location.name == "TrailTracker"
+    assert location.node_id == "12345678"
+    assert abs(location.lat - 37.7749) < 0.0001
+    assert abs(location.speed - 1.5) < 0.01
+
+
+def test_decrypt_trackers_group_data_rejects_wrong_data_type():
+    """GROUP_DATA with a non-tracker data_type is ignored."""
+    channel_key = bytes.fromhex(TRACKERS_CHANNEL_KEY)
+    mcl1 = build_mcl1_payload()
+    plain = (0x0100).to_bytes(2, "little") + bytes([len(mcl1)]) + mcl1
+    pad_len = (16 - len(plain) % 16) % 16
+    if pad_len == 0:
+        pad_len = 16
+    plain += bytes(pad_len)
+    ciphertext = AES.new(channel_key, AES.MODE_ECB).encrypt(plain)
+    channel_secret = channel_key + bytes(16)
+    mac = hmac.new(channel_secret, ciphertext, hashlib.sha256).digest()[:2]
+    channel_hash = hashlib.sha256(channel_key).digest()[:1]
+    encrypted = channel_hash + mac + ciphertext
+
+    assert decrypt_trackers_location(encrypted) is None
 
 
 def test_location_packet_decryption_info():
@@ -272,9 +375,9 @@ def test_location_packet_decryption_info():
     assert "3700mV" in message
 
 
-def test_location_decrypted_info_includes_speed_and_heading_fields():
-    """LOCATION decoded raw-packet info includes speed and heading as structured fields."""
-    from app.packet_processor import _location_decrypted_info
+def test_tracker_decrypted_info_includes_speed_and_heading_fields():
+    """Tracker decoded raw-packet info includes speed and heading as structured fields."""
+    from app.packet_processor import _tracker_decrypted_info
 
     payload = bytearray(32)
     payload[0:4] = b"MCL1"
@@ -294,8 +397,10 @@ def test_location_decrypted_info_includes_speed_and_heading_fields():
     location = parse_location(bytes(payload))
     assert location is not None
 
-    result = _location_decrypted_info(location, "TrackerNode")
+    result = _tracker_decrypted_info(location, "TrackerNode")
 
     assert result["decrypted"] is True
+    assert result["is_tracker"] is True
+    assert result["node_id"] == "abcd1234"
     assert abs(result["speed"] - 1.5) < 0.01
     assert abs(result["heading"] - 90.0) < 0.01

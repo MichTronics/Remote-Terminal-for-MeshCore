@@ -284,7 +284,7 @@ export function SettingsSpamDefenseSection({
               className="md:max-w-xs"
             />
             <p className="text-[0.8125rem] text-muted-foreground">
-              Maximum hotspot candidates shown in live UI and history. 0 means unlimited.
+              Maximum focused hotspot candidates after geo merge. 0 uses the default of 5.
             </p>
           </div>
         </div>

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from app.services.spam_path_analysis import (
+    consolidate_geo_hotspots,
     estimate_origin_geo,
     hop_suspect_score,
     narrow_dominant_prefix,
@@ -95,6 +96,64 @@ def test_estimate_origin_geo_prefers_source_side_hop():
     assert origin.hop == "AA"
     assert origin.name == "Ingress"
     assert origin.geo_chain_valid is True
+
+
+def test_consolidate_geo_hotspots_merges_nearby_ingress_witnesses():
+    from app.models import SpamFloodCluster
+
+    # Ten ingress witnesses around Amsterdam-ish coords — should collapse to one focus area.
+    clusters = [
+        SpamFloodCluster(
+            entry_hop=f"H{i:02X}",
+            entry_name=f"Repeater-{i}",
+            lat=52.37 + (i * 0.01),
+            lon=4.90 + (i * 0.01),
+            packet_count=4,
+            dominant_route=f"H{i:02X}",
+            hop_tokens=[f"H{i:02X}"],
+            traffic_share=0.1,
+            confidence=40,
+            last_seen=1_700_000_000,
+            cluster_mode="entry_fallback",
+        )
+        for i in range(10)
+    ]
+    focused = consolidate_geo_hotspots(clusters, max_clusters=5, merge_radius_km=35.0)
+    assert len(focused) == 1
+    assert focused[0].cluster_mode == "geo_merged"
+    assert focused[0].packet_count == 40
+    assert "nearby" in (focused[0].entry_name or "")
+
+
+def test_consolidate_geo_hotspots_keeps_distant_regions_separate():
+    from app.models import SpamFloodCluster
+
+    north = SpamFloodCluster(
+        entry_hop="AA",
+        entry_name="North",
+        lat=53.2,
+        lon=6.5,
+        packet_count=20,
+        dominant_route="AA",
+        hop_tokens=["AA"],
+        traffic_share=0.5,
+        confidence=60,
+        last_seen=1_700_000_000,
+    )
+    south = SpamFloodCluster(
+        entry_hop="BB",
+        entry_name="South",
+        lat=51.4,
+        lon=5.4,
+        packet_count=18,
+        dominant_route="BB",
+        hop_tokens=["BB"],
+        traffic_share=0.45,
+        confidence=55,
+        last_seen=1_700_000_000,
+    )
+    focused = consolidate_geo_hotspots([north, south], max_clusters=5, merge_radius_km=35.0)
+    assert len(focused) == 2
 
 
 def test_hop_suspect_score_favors_source_side_hops():

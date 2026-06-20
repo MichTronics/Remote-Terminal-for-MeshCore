@@ -22,8 +22,10 @@ from app.services.spam_gateway_filter import (
 )
 from app.services.spam_path_analysis import (
     cluster_confidence,
+    consolidate_geo_hotspots,
     estimate_origin_geo,
     format_route,
+    hop_suspect_score,
     split_entry_partitioned_clusters,
     split_path_clusters,
 )
@@ -211,22 +213,16 @@ class SpamLiveTracker:
     def _min_cluster_size(self) -> int:
         return max(1, int(self.packet_threshold * self.cluster_min_ratio))
 
-    def _max_report_clusters(self) -> int | None:
+    def _max_report_clusters(self) -> int:
         if self.max_report_clusters <= 0:
-            return None
+            return 5
         return self.max_report_clusters
 
     def _apply_report_limit(self, clusters: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        limit = self._max_report_clusters()
-        if limit is None:
-            return clusters
-        return clusters[:limit]
+        return clusters[: self._max_report_clusters()]
 
     def _apply_report_limit_models(self, clusters: list[SpamFloodCluster]) -> list[SpamFloodCluster]:
-        limit = self._max_report_clusters()
-        if limit is None:
-            return clusters
-        return clusters[:limit]
+        return clusters[: self._max_report_clusters()]
 
     @staticmethod
     def _cluster_identity_key(cluster: SpamFloodCluster) -> str:
@@ -360,13 +356,12 @@ class SpamLiveTracker:
 
     def _cluster_packets_partitioned_from(self, records: list[_PacketRecord]) -> list[dict[str, Any]]:
         min_cluster_size = self._min_cluster_size()
-        max_clusters = self._max_report_clusters() or len(records)
         partitioned_clusters = split_entry_partitioned_clusters(
             records,
             min_cluster_size=min_cluster_size,
             min_share=self.cluster_min_ratio,
             get_path=lambda record: record.full_rf_path,
-            max_clusters=max_clusters,
+            max_clusters=self._max_report_clusters(),
         )
         return self._build_cluster_results(partitioned_clusters, cluster_mode="partitioned")
 
@@ -384,10 +379,18 @@ class SpamLiveTracker:
             by_entry.setdefault(record.entry_node, []).append(record)
 
         total = len(records)
-        results: list[dict[str, Any]] = []
-        for entry_hop, matched_records in sorted(by_entry.items(), key=lambda item: -len(item[1])):
+        path_observations = [record.full_rf_path for record in records]
+        scored_entries: list[tuple[float, str, list[_PacketRecord]]] = []
+        for entry_hop, matched_records in by_entry.items():
             if len(matched_records) < min_cluster_size:
                 continue
+            witness_score = hop_suspect_score(entry_hop, path_observations)
+            score = len(matched_records) * (1.0 + witness_score)
+            scored_entries.append((score, entry_hop, matched_records))
+
+        scored_entries.sort(key=lambda item: (-item[0], item[1]))
+        results: list[dict[str, Any]] = []
+        for _, entry_hop, matched_records in scored_entries[: self._max_report_clusters()]:
             path_counts = Counter(record.full_rf_path for record in matched_records)
             dominant_path, _ = path_counts.most_common(1)[0]
             results.append(
@@ -404,7 +407,7 @@ class SpamLiveTracker:
                     "cluster_mode": "entry_fallback",
                 }
             )
-        return self._apply_report_limit(results)
+        return results
 
     def _fallback_entry_clusters(self) -> list[dict[str, Any]]:
         return self._fallback_entry_clusters_from(self._clustering_records())
@@ -485,10 +488,13 @@ class SpamLiveTracker:
             )
         return enriched_clusters
 
+    def _focus_geo_clusters(self, clusters: list[SpamFloodCluster]) -> list[SpamFloodCluster]:
+        return consolidate_geo_hotspots(clusters, max_clusters=self._max_report_clusters())
+
     async def _build_status_async(
         self, current_time: float, clusters: list[dict[str, Any]]
     ) -> SpamLiveStatus:
-        enriched_clusters = await self._enrich_clusters(clusters)
+        enriched_clusters = self._focus_geo_clusters(await self._enrich_clusters(clusters))
         clusters_stale = False
         if enriched_clusters:
             self._update_episode_peak_clusters(enriched_clusters)
@@ -653,7 +659,7 @@ class SpamLiveTracker:
             return
         cluster_raw = self._cluster_packets_from(self._episode_packet_records)
         if cluster_raw:
-            enriched = await self._enrich_clusters(cluster_raw)
+            enriched = self._focus_geo_clusters(await self._enrich_clusters(cluster_raw))
             self._update_episode_peak_clusters(enriched)
             self._episode_last_clusters = self._all_episode_peak_clusters()
         try:
@@ -677,7 +683,7 @@ class SpamLiveTracker:
         total_packets = self._episode_total_packets
         cluster_raw = self._cluster_packets_from(self._episode_packet_records)
         if cluster_raw:
-            final_clusters = await self._enrich_clusters(cluster_raw)
+            final_clusters = self._focus_geo_clusters(await self._enrich_clusters(cluster_raw))
             self._update_episode_peak_clusters(final_clusters)
             final_clusters = self._all_episode_peak_clusters()
         elif self._episode_peak_clusters:

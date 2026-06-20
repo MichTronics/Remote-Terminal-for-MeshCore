@@ -57,6 +57,16 @@ function clusterModeBadge(cluster: SpamFloodCluster): ReactNode {
       </div>
     );
   }
+  if (cluster.cluster_mode === 'geo_merged') {
+    return (
+      <div
+        className="rounded bg-primary/10 px-2 py-0.5 text-[0.625rem] font-medium text-primary"
+        title="Several nearby ingress repeaters were merged into one geographic focus area."
+      >
+        Geo focus
+      </div>
+    );
+  }
   if (cluster.cluster_mode === 'sticky') {
     return (
       <div className="rounded bg-muted px-2 py-0.5 text-[0.625rem] font-medium text-muted-foreground">

@@ -9,8 +9,11 @@ from typing import Any, Callable, TypeVar
 
 # Typical RF hop distance without an MQTT gateway bridge.
 DEFAULT_MAX_HOP_DISTANCE_KM = 10.0
+DEFAULT_TOP_HOTSPOTS = 5
+DEFAULT_GEO_MERGE_RADIUS_KM = 35.0
 
 RecordT = TypeVar("RecordT")
+ClusterT = TypeVar("ClusterT")
 
 
 @dataclass(frozen=True)
@@ -333,3 +336,141 @@ def hop_suspect_score(
         ),
         4,
     )
+
+
+def cluster_geo_point(cluster: object) -> tuple[float, float] | None:
+    """Return the best available lat/lon for a flood hotspot cluster."""
+    origin_lat = getattr(cluster, "origin_lat", None)
+    origin_lon = getattr(cluster, "origin_lon", None)
+    if origin_lat is not None and origin_lon is not None:
+        if float(origin_lat) != 0.0 or float(origin_lon) != 0.0:
+            return (float(origin_lat), float(origin_lon))
+
+    lat = getattr(cluster, "lat", None)
+    lon = getattr(cluster, "lon", None)
+    if lat is not None and lon is not None:
+        if float(lat) != 0.0 or float(lon) != 0.0:
+            return (float(lat), float(lon))
+    return None
+
+
+def geo_weighted_centroid(clusters: list[object]) -> tuple[float, float] | None:
+    """Traffic-weighted geographic center of flood hotspots with coordinates."""
+    weighted: list[tuple[tuple[float, float], int]] = []
+    for cluster in clusters:
+        point = cluster_geo_point(cluster)
+        packet_count = int(getattr(cluster, "packet_count", 0) or 0)
+        if point is not None and packet_count > 0:
+            weighted.append((point, packet_count))
+    if not weighted:
+        return None
+    total_weight = sum(weight for _, weight in weighted)
+    lat = sum(point[0] * weight for point, weight in weighted) / total_weight
+    lon = sum(point[1] * weight for point, weight in weighted) / total_weight
+    return (lat, lon)
+
+
+def _sort_clusters_for_geo_consolidation(clusters: list[object]) -> list[object]:
+    """Prefer high-traffic hotspots near the geographic center of the flood."""
+    centroid = geo_weighted_centroid(clusters)
+    if centroid is None:
+        return sorted(
+            clusters,
+            key=lambda cluster: (
+                -int(getattr(cluster, "packet_count", 0) or 0),
+                -int(getattr(cluster, "confidence", 0) or 0),
+            ),
+        )
+
+    def sort_key(cluster: object) -> tuple[int, float, int]:
+        packet_count = int(getattr(cluster, "packet_count", 0) or 0)
+        confidence = int(getattr(cluster, "confidence", 0) or 0)
+        point = cluster_geo_point(cluster)
+        if point is None:
+            return (-packet_count, 9999.0, -confidence)
+        distance_km = haversine_distance_km(centroid[0], centroid[1], point[0], point[1])
+        return (-packet_count, distance_km, -confidence)
+
+    return sorted(clusters, key=sort_key)
+
+
+def consolidate_geo_hotspots(
+    clusters: list[ClusterT],
+    *,
+    max_clusters: int = DEFAULT_TOP_HOTSPOTS,
+    merge_radius_km: float = DEFAULT_GEO_MERGE_RADIUS_KM,
+) -> list[ClusterT]:
+    """Merge nearby ingress hotspots and cap the focused report list.
+
+    Lightweight geo focus: no ML, just traffic-weighted centroid + radius merge.
+    """
+    if not clusters:
+        return []
+
+    limit = max_clusters if max_clusters > 0 else DEFAULT_TOP_HOTSPOTS
+    remaining = list(_sort_clusters_for_geo_consolidation(clusters))
+    merged: list[ClusterT] = []
+
+    while remaining and len(merged) < limit:
+        primary = remaining.pop(0)
+        primary_point = cluster_geo_point(primary)
+        group = [primary]
+
+        if primary_point is not None:
+            still_remaining: list[ClusterT] = []
+            for candidate in remaining:
+                point = cluster_geo_point(candidate)
+                if (
+                    point is not None
+                    and haversine_distance_km(
+                        primary_point[0],
+                        primary_point[1],
+                        point[0],
+                        point[1],
+                    )
+                    <= merge_radius_km
+                ):
+                    group.append(candidate)
+                else:
+                    still_remaining.append(candidate)
+            remaining = still_remaining
+
+        if len(group) == 1:
+            merged.append(primary)
+            continue
+
+        total_packets = sum(int(getattr(item, "packet_count", 0) or 0) for item in group)
+        total_share = sum(float(getattr(item, "traffic_share", 0.0) or 0.0) for item in group)
+        best_confidence = max(int(getattr(item, "confidence", 0) or 0) for item in group)
+        last_seen = max(int(getattr(item, "last_seen", 0) or 0) for item in group)
+
+        labels: list[str] = []
+        for item in group:
+            label = (
+                getattr(item, "entry_name", None)
+                or getattr(item, "origin_name", None)
+                or getattr(item, "entry_hop", "")
+            )
+            if label and label not in labels:
+                labels.append(str(label))
+
+        entry_name = getattr(primary, "entry_name", None)
+        if len(labels) > 1:
+            entry_name = f"{labels[0]} (+{len(labels) - 1} nearby)"
+        elif labels:
+            entry_name = labels[0]
+
+        merged.append(
+            primary.model_copy(
+                update={
+                    "entry_name": entry_name,
+                    "packet_count": total_packets,
+                    "traffic_share": round(total_share, 4),
+                    "confidence": best_confidence,
+                    "last_seen": last_seen,
+                    "cluster_mode": "geo_merged",
+                }
+            )
+        )
+
+    return merged[:limit]

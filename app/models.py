@@ -629,7 +629,7 @@ class SpamFloodCluster(BaseModel):
     last_seen: int = Field(description="Unix timestamp of the newest packet in this cluster")
     cluster_mode: str | None = Field(
         default=None,
-        description="narrowed, partitioned, entry_fallback, or sticky when cluster confidence is degraded",
+        description="narrowed, partitioned, entry_fallback, geo_merged, or sticky when cluster confidence is degraded",
     )
 
 
@@ -1228,7 +1228,7 @@ class AppSettings(BaseModel):
         default=0,
         ge=0,
         le=100,
-        description="Maximum hotspot candidates in live UI and persisted reports (0 = unlimited).",
+        description="Maximum focused hotspot candidates after geo merge (0 = default 5).",
     )
     spam_live_fluke_max_packets: int = Field(
         default=35,

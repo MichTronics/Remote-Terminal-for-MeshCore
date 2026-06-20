@@ -127,6 +127,7 @@ beforeEach(() => {
     spam_flood_repeater_keys: [],
     spam_flood_start_command: '',
     spam_flood_end_command: '',
+    spam_flood_repeater_password: '',
   });
   mockedApi.getRadioConfig.mockResolvedValue({
     public_key: 'aa'.repeat(32),
@@ -1086,6 +1087,7 @@ describe('SettingsFanoutSection', () => {
       spam_flood_repeater_keys: [],
       spam_flood_start_command: '',
       spam_flood_end_command: '',
+    spam_flood_repeater_password: '',
     });
 
     renderSection();

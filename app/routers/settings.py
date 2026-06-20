@@ -40,6 +40,7 @@ MAX_TRACKED_TELEMETRY_REPEATERS = 8
 MAX_TRACKED_TELEMETRY_CONTACTS = 8
 MAX_SPAM_FLOOD_REPEATERS = 16
 MAX_SPAM_FLOOD_COMMAND_LEN = 256
+MAX_SPAM_FLOOD_REPEATER_PASSWORD_LEN = 256
 
 SPAM_TUNING_UPDATE_FIELDS = (
     "spam_gateway_keys",
@@ -153,6 +154,11 @@ class AppSettingsUpdate(BaseModel):
         default=None,
         max_length=MAX_SPAM_FLOOD_COMMAND_LEN,
         description="CLI command sent when a spam flood episode ends",
+    )
+    spam_flood_repeater_password: str | None = Field(
+        default=None,
+        max_length=MAX_SPAM_FLOOD_REPEATER_PASSWORD_LEN,
+        description="Optional repeater login password for spam-flood CLI automation",
     )
 
 
@@ -461,6 +467,9 @@ async def update_settings(update: AppSettingsUpdate) -> AppSettings:
 
     if update.spam_flood_end_command is not None:
         kwargs["spam_flood_end_command"] = update.spam_flood_end_command.strip()
+
+    if update.spam_flood_repeater_password is not None:
+        kwargs["spam_flood_repeater_password"] = update.spam_flood_repeater_password.strip()
 
     # Flood scope
     flood_scope_changed = False

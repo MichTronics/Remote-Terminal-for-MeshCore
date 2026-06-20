@@ -75,6 +75,7 @@ class SpamLiveTracker:
     _episode_peak_clusters: dict[str, SpamFloodCluster] = field(default_factory=dict, init=False)
     _episode_open: bool = field(default=False, init=False)
     _repeater_automation_armed: bool = field(default=False, init=False)
+    _episode_watchdog_task: asyncio.Task[None] | None = field(default=None, init=False)
 
     @property
     def gateway_pubkeys(self) -> frozenset[str]:
@@ -589,8 +590,48 @@ class SpamLiveTracker:
         self._episode_started_at = int(self._detected_at or current_time)
         self._episode_total_packets = 1
         schedule_spam_flood_repeater_commands("start")
+        self._ensure_episode_watchdog()
+
+    def _cancel_episode_watchdog(self) -> None:
+        task = self._episode_watchdog_task
+        self._episode_watchdog_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _ensure_episode_watchdog(self) -> None:
+        task = self._episode_watchdog_task
+        if task is not None and not task.done():
+            return
+        self._episode_watchdog_task = asyncio.create_task(self._run_episode_watchdog())
+
+    async def _run_episode_watchdog(self) -> None:
+        """End flood episodes when the hold window expires even if no new DMs arrive."""
+        try:
+            while self._episode_open:
+                await asyncio.sleep(2.0)
+                if not self._episode_open:
+                    return
+                await self._maybe_finalize_expired_episode()
+        except asyncio.CancelledError:
+            return
+
+    async def _maybe_finalize_expired_episode(self) -> None:
+        current_time = time.time()
+        was_active = self._active
+        self._sync_active_state(current_time)
+        if not (was_active and not self._active):
+            return
+
+        await self._end_episode(current_time)
+        from app.websocket import broadcast_event
+
+        status = await self._build_status_async(current_time, clusters=[])
+        self._last_status = status
+        self._last_broadcast_at = 0.0
+        broadcast_event("spam_flood_alert", status.model_dump())
 
     def _reset_episode_state(self) -> None:
+        self._cancel_episode_watchdog()
         self._episode_open = False
         self._repeater_automation_armed = False
         self._episode_db_id = None

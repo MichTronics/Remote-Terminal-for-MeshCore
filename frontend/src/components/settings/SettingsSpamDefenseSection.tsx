@@ -58,6 +58,9 @@ export function SettingsSpamDefenseSection({
   );
   const [startCommand, setStartCommand] = useState(appSettings.spam_flood_start_command ?? '');
   const [endCommand, setEndCommand] = useState(appSettings.spam_flood_end_command ?? '');
+  const [repeaterPassword, setRepeaterPassword] = useState(
+    appSettings.spam_flood_repeater_password ?? ''
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -75,6 +78,7 @@ export function SettingsSpamDefenseSection({
     setSelectedKeys(appSettings.spam_flood_repeater_keys ?? []);
     setStartCommand(appSettings.spam_flood_start_command ?? '');
     setEndCommand(appSettings.spam_flood_end_command ?? '');
+    setRepeaterPassword(appSettings.spam_flood_repeater_password ?? '');
   }, [appSettings]);
 
   const toggleRepeater = (publicKey: string) => {
@@ -153,6 +157,7 @@ export function SettingsSpamDefenseSection({
         spam_flood_repeater_keys: selectedKeys,
         spam_flood_start_command: startCommand.trim(),
         spam_flood_end_command: endCommand.trim(),
+        spam_flood_repeater_password: repeaterPassword,
       });
       toast.success('Spam defense settings saved');
     } catch (err) {
@@ -331,12 +336,12 @@ export function SettingsSpamDefenseSection({
           <h3 className="text-base font-semibold tracking-tight">Spam Flood Repeater Commands</h3>
           <p className="mt-1 text-[0.8125rem] text-muted-foreground">
             When the live spam tracker starts a flood episode, RemoteTerm sends the configured CLI
-            command to selected favorite repeaters twice (5 seconds apart) so a lost packet in
-            flood traffic is less likely to block the command. When the episode ends (including the
-            post-flood hold window), it sends the restore command the same way. Your radio node must be connected and each repeater must
-            accept your CLI access — you need to be on that repeater&apos;s ACL with sufficient
-            permission (typically read-write or admin). Log in from the repeater dashboard first if
-            privileged commands are required.
+            command to selected favorite repeaters five times (10 seconds apart) so lost packets in
+            flood traffic are less likely to block the command. When the episode ends (including the
+            post-flood hold window), it sends the restore command the same way. Your radio must be
+            connected and each repeater must accept your CLI access. Store the repeater login
+            password here so automation can authenticate — browser-only dashboard login is not
+            enough when the backend sends commands on its own.
           </p>
         </div>
 
@@ -389,6 +394,23 @@ export function SettingsSpamDefenseSection({
           )}
         </div>
 
+        <div className="space-y-2">
+          <Label htmlFor="spam-flood-repeater-password">Repeater login password (optional)</Label>
+          <Input
+            id="spam-flood-repeater-password"
+            type="password"
+            value={repeaterPassword}
+            onChange={(event) => setRepeaterPassword(event.target.value)}
+            placeholder="Same password you use in the repeater dashboard"
+            className="font-mono text-sm"
+            autoComplete="off"
+          />
+          <p className="text-[0.8125rem] text-muted-foreground">
+            Stored server-side and used before each automated CLI command. Leave empty only if your
+            repeaters accept unauthenticated guest CLI (uncommon for set repeat).
+          </p>
+        </div>
+
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="spam-flood-start-command">Flood start command</Label>
@@ -400,7 +422,7 @@ export function SettingsSpamDefenseSection({
               className="font-mono text-sm"
             />
             <p className="text-[0.8125rem] text-muted-foreground">
-              Sent once when a spam flood episode begins.
+              Sent when a spam flood episode begins (five attempts, 10s apart).
             </p>
           </div>
           <div className="space-y-2">
@@ -413,7 +435,7 @@ export function SettingsSpamDefenseSection({
               className="font-mono text-sm"
             />
             <p className="text-[0.8125rem] text-muted-foreground">
-              Sent once when the episode ends, after the hold window closes.
+              Sent when the episode ends after the hold window (five attempts, 10s apart).
             </p>
           </div>
         </div>

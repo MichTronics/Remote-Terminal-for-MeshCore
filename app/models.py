@@ -1258,6 +1258,13 @@ class AppSettings(BaseModel):
         default="",
         description="CLI command sent when a spam flood episode ends (for example set repeat on)",
     )
+    spam_flood_repeater_password: str = Field(
+        default="",
+        description=(
+            "Optional repeater login password used before spam-flood CLI automation. "
+            "Applied to all selected repeaters. Stored server-side in app_settings."
+        ),
+    )
 
 
 class BusyChannel(BaseModel):

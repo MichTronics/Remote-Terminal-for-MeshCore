@@ -52,7 +52,8 @@ class AppSettingsRepository:
                    spam_live_max_report_clusters,
                    spam_live_fluke_max_packets, spam_live_fluke_max_duration_secs,
                    spam_flood_automation_enabled, spam_flood_repeater_keys,
-                   spam_flood_start_command, spam_flood_end_command
+                   spam_flood_start_command, spam_flood_end_command,
+                   spam_flood_repeater_password
             FROM app_settings WHERE id = 1
             """
         ) as cursor:
@@ -170,6 +171,11 @@ class AppSettingsRepository:
             spam_flood_end_command = ""
 
         try:
+            spam_flood_repeater_password = row["spam_flood_repeater_password"] or ""
+        except (KeyError, TypeError):
+            spam_flood_repeater_password = ""
+
+        try:
             spam_gateway_keys = row["spam_gateway_keys"] or ""
         except (KeyError, TypeError):
             spam_gateway_keys = ""
@@ -249,6 +255,7 @@ class AppSettingsRepository:
             spam_flood_repeater_keys=spam_flood_repeater_keys,
             spam_flood_start_command=spam_flood_start_command,
             spam_flood_end_command=spam_flood_end_command,
+            spam_flood_repeater_password=spam_flood_repeater_password,
         )
 
     @staticmethod
@@ -284,6 +291,7 @@ class AppSettingsRepository:
         spam_flood_repeater_keys: list[str] | None = None,
         spam_flood_start_command: str | None = None,
         spam_flood_end_command: str | None = None,
+        spam_flood_repeater_password: str | None = None,
     ) -> None:
         """Apply field updates using an already-acquired connection.
 
@@ -409,6 +417,10 @@ class AppSettingsRepository:
             updates.append("spam_flood_end_command = ?")
             params.append(spam_flood_end_command)
 
+        if spam_flood_repeater_password is not None:
+            updates.append("spam_flood_repeater_password = ?")
+            params.append(spam_flood_repeater_password)
+
         if updates:
             query = f"UPDATE app_settings SET {', '.join(updates)} WHERE id = 1"
             async with conn.execute(query, params):
@@ -454,6 +466,7 @@ class AppSettingsRepository:
         spam_flood_repeater_keys: list[str] | None = None,
         spam_flood_start_command: str | None = None,
         spam_flood_end_command: str | None = None,
+        spam_flood_repeater_password: str | None = None,
     ) -> AppSettings:
         """Update app settings. Only provided fields are updated."""
         async with db.tx() as conn:
@@ -488,6 +501,7 @@ class AppSettingsRepository:
                 spam_flood_repeater_keys=spam_flood_repeater_keys,
                 spam_flood_start_command=spam_flood_start_command,
                 spam_flood_end_command=spam_flood_end_command,
+                spam_flood_repeater_password=spam_flood_repeater_password,
             )
             return await AppSettingsRepository._get_in_conn(conn)
 

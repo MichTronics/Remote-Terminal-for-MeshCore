@@ -310,6 +310,38 @@ async def test_spam_live_tracker_sends_end_command_when_db_start_fails(test_db):
 
 
 @pytest.mark.asyncio
+async def test_spam_live_tracker_watchdog_ends_episode_without_new_packets(test_db):
+    tracker = _make_tracker(packet_threshold=2, hold_secs=5, gateway_pubkeys=frozenset())
+    base = 1_700_000_000.0
+    with (
+        patch(
+            "app.services.spam_live_tracker.schedule_spam_flood_repeater_commands",
+        ) as mock_schedule,
+        patch(
+            "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+            new_callable=AsyncMock,
+            return_value=1.0,
+        ),
+        patch(
+            "app.services.spam_live_tracker.SpamFloodEpisodeRepository.finalize",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=base)
+        await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
+        assert tracker._episode_open is True
+        assert mock_schedule.call_args_list[0].args == ("start",)
+
+        tracker._history.clear()
+        tracker._hold_until = base + 2
+        with patch("app.services.spam_live_tracker.time.time", return_value=base + 10):
+            await tracker._maybe_finalize_expired_episode()
+
+        assert tracker._episode_open is False
+        assert mock_schedule.call_args_list[-1].args == ("end",)
+
+
+@pytest.mark.asyncio
 async def test_spam_live_tracker_longest_route_tokens_use_max_hop_path():
     tracker = _make_tracker(packet_threshold=2, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
     await tracker.observe_and_maybe_alert(path_hex="AA11", path_len=2, observed_at=1_700_000_000)

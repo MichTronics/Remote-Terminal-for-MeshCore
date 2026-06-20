@@ -565,6 +565,7 @@ export interface AppSettings {
   spam_flood_repeater_keys: string[];
   spam_flood_start_command: string;
   spam_flood_end_command: string;
+  spam_flood_repeater_password: string;
 }
 
 export interface AppSettingsUpdate {
@@ -592,6 +593,7 @@ export interface AppSettingsUpdate {
   spam_flood_repeater_keys?: string[];
   spam_flood_start_command?: string;
   spam_flood_end_command?: string;
+  spam_flood_repeater_password?: string;
 }
 
 export interface TelemetrySchedule {

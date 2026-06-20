@@ -87,7 +87,8 @@ const baseSettings: AppSettings = {
   spam_flood_automation_enabled: false,
   spam_flood_repeater_keys: [],
   spam_flood_start_command: '',
-  spam_flood_end_command: '',
+    spam_flood_end_command: '',
+    spam_flood_repeater_password: '',
 };
 
 function renderModal(overrides?: {

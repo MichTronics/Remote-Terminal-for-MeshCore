@@ -65,6 +65,29 @@ body {
   border: none !important;
 }
 
+.tracker-marker-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  pointer-events: none;
+}
+
+.tracker-marker-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  font-size: 0.625rem;
+  line-height: 1.1;
+  font-weight: 600;
+  color: var(--foreground);
+  text-shadow:
+    0 0 2px var(--background),
+    0 0 4px var(--background),
+    1px 1px 0 var(--background),
+    -1px -1px 0 var(--background);
+  white-space: nowrap;
+}
+
 .leaflet-pane {
   z-index: 0 !important;
 }

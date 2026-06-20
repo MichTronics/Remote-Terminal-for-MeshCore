@@ -242,6 +242,12 @@ export function useRealtimeAppState({
           if (Number.isFinite(location.heading)) {
             merged.tracker_heading = location.heading;
           }
+          if (Number.isFinite(location.altitude)) {
+            merged.tracker_altitude = location.altitude;
+          }
+          if (Number.isFinite(location.speed)) {
+            merged.tracker_speed = location.speed;
+          }
           if (location.name && !existing.tracker_name) {
             merged.tracker_name = location.name;
           }
@@ -250,6 +256,8 @@ export function useRealtimeAppState({
             existing.lon === merged.lon &&
             existing.is_tracker === merged.is_tracker &&
             existing.tracker_heading === merged.tracker_heading &&
+            existing.tracker_altitude === merged.tracker_altitude &&
+            existing.tracker_speed === merged.tracker_speed &&
             existing.tracker_name === merged.tracker_name;
           if (unchanged) return prev;
           const updated = [...prev];

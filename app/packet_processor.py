@@ -984,6 +984,8 @@ async def _apply_tracker_location(
         is_tracker=True,  # Mark as tracker
         tracker_name=location.name,  # Store tracker name
         tracker_heading=location.heading,
+        tracker_altitude=location.altitude,
+        tracker_speed=location.speed,
     )
 
     # Update name if provided in location packet and contact doesn't have one

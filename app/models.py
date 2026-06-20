@@ -45,6 +45,8 @@ class ContactUpsert(BaseModel):
     is_tracker: bool | None = None
     tracker_name: str | None = None
     tracker_heading: float | None = None
+    tracker_altitude: int | None = None
+    tracker_speed: float | None = None
 
     @classmethod
     def from_contact(cls, contact: Contact, **changes) -> ContactUpsert:
@@ -121,6 +123,8 @@ class Contact(BaseModel):
     is_tracker: bool = False  # True if this contact sends Trackers-channel GROUP_DATA GPS updates
     tracker_name: str | None = None  # Name from decoded tracker payload
     tracker_heading: float | None = None  # Last known heading in degrees from tracker payloads
+    tracker_altitude: int | None = None  # Last known altitude in metres from tracker payloads
+    tracker_speed: float | None = None  # Last known speed in m/s from tracker payloads
     effective_route: ContactRoute | None = None
     effective_route_source: Literal["override", "direct", "flood"] = "flood"
     direct_route: ContactRoute | None = None

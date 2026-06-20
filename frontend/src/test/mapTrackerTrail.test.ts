@@ -48,6 +48,16 @@ describe('mapTrackerTrail', () => {
     expect(moved?.get(tracker.public_key)?.[1].lat).toBe(52.01);
   });
 
+  it('copies tracker altitude and speed into trail points', () => {
+    const tracker = makeTracker({ tracker_altitude: 120, tracker_speed: 1.5 });
+    const trails = new Map<string, LocationHistory[]>();
+
+    const first = appendTrackerTrailPoint(trails, tracker, 1_700_000_000);
+    const point = first?.get(tracker.public_key)?.[0];
+    expect(point?.altitude).toBe(120);
+    expect(point?.speed).toBe(1.5);
+  });
+
   it('ignores duplicate coordinates', () => {
     const tracker = makeTracker();
     const trails = new Map<string, LocationHistory[]>([

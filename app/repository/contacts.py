@@ -70,8 +70,9 @@ class ContactRepository:
                                       route_override_hash_mode,
                                       last_advert, lat, lon, last_seen,
                                       on_radio, last_contacted, first_seen,
-                                      is_tracker, tracker_name, tracker_heading)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      is_tracker, tracker_name, tracker_heading,
+                                      tracker_altitude, tracker_speed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(public_key) DO UPDATE SET
                     name = COALESCE(excluded.name, contacts.name),
                     type = CASE WHEN excluded.type = 0 THEN contacts.type ELSE excluded.type END,
@@ -110,7 +111,9 @@ class ContactRepository:
                         ELSE contacts.is_tracker
                     END,
                     tracker_name = COALESCE(excluded.tracker_name, contacts.tracker_name),
-                    tracker_heading = COALESCE(excluded.tracker_heading, contacts.tracker_heading)
+                    tracker_heading = COALESCE(excluded.tracker_heading, contacts.tracker_heading),
+                    tracker_altitude = COALESCE(excluded.tracker_altitude, contacts.tracker_altitude),
+                    tracker_speed = COALESCE(excluded.tracker_speed, contacts.tracker_speed)
                 """,
                 (
                     contact_row.public_key.lower(),
@@ -134,6 +137,8 @@ class ContactRepository:
                     None if contact_row.is_tracker is None else int(contact_row.is_tracker),
                     contact_row.tracker_name,
                     contact_row.tracker_heading,
+                    contact_row.tracker_altitude,
+                    contact_row.tracker_speed,
                 ),
             ):
                 pass
@@ -195,6 +200,10 @@ class ContactRepository:
             tracker_heading=(
                 row["tracker_heading"] if "tracker_heading" in available_columns else None
             ),
+            tracker_altitude=(
+                row["tracker_altitude"] if "tracker_altitude" in available_columns else None
+            ),
+            tracker_speed=(row["tracker_speed"] if "tracker_speed" in available_columns else None),
         )
 
     @staticmethod

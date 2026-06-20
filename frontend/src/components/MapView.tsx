@@ -36,7 +36,17 @@ import {
   mergeTrackerTrailUpdates,
   trackerTrailEntriesFromApi,
 } from '../utils/mapTrackerTrail';
+import {
+  formatTrackerAltitudeM,
+  formatTrackerSpeedKmh,
+} from '../utils/trackerDisplay';
 import { MapLivePacketFeed } from './MapLivePacketFeed';
+
+interface TrackerHistoryHint {
+  heading: number | null;
+  altitude: number | null;
+  speed: number | null;
+}
 
 interface MapViewProps {
   contacts: Contact[];
@@ -269,7 +279,12 @@ function makeRoleMarkerIcon(role: MapRoleKey, opacity: number, scale = 1): L.Div
   });
 }
 
-function makeTrackerMarkerIcon(scale = 1, heading: number | null = null): L.DivIcon {
+function makeTrackerMarkerIcon(
+  scale = 1,
+  heading: number | null = null,
+  altitudeLabel: string | null = null,
+  speedLabel: string | null = null
+): L.DivIcon {
   const size = Math.max(10, Math.round(28 * scale * TRACKER_MARKER_SCALE));
   const c = size / 2;
   const dotR = Math.max(2.5, 3.5 * scale * TRACKER_MARKER_SCALE);
@@ -288,10 +303,28 @@ function makeTrackerMarkerIcon(scale = 1, heading: number | null = null): L.DivI
     arrow = `<g transform="rotate(${heading} ${c} ${c})"><polygon points="${c},${tipY} ${c + arrowHalfW},${baseY} ${c - arrowHalfW},${baseY}" fill="${color}" stroke="${stroke}" stroke-width="${Math.max(0.5, strokeW * 0.75)}"/></g>`;
   }
 
+  const svg = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">${arrow}${dot}</svg>`;
+
+  const labelLines = [altitudeLabel, speedLabel].filter(
+    (line): line is string => Boolean(line)
+  );
+  const labelHtml =
+    labelLines.length > 0
+      ? `<div class="tracker-marker-label"><div>${labelLines[0]}</div>${
+          labelLines[1] ? `<div>${labelLines[1]}</div>` : ''
+        }</div>`
+      : '';
+
+  const labelWidth = labelLines.length > 0 ? Math.round(52 * scale) : 0;
+  const totalWidth = size + (labelHtml ? labelWidth + 4 : 0);
+  const html = labelHtml
+    ? `<div class="tracker-marker-wrap">${svg}${labelHtml}</div>`
+    : svg;
+
   return L.divIcon({
-    html: `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">${arrow}${dot}</svg>`,
+    html,
     className: 'tracker-marker',
-    iconSize: [size, size],
+    iconSize: [totalWidth, size],
     iconAnchor: [c, c],
     popupAnchor: [0, -Math.max(dotR, arrowLen * 0.5 + dotR)],
   });
@@ -407,12 +440,16 @@ function ContactMapMarker({
   markerScale,
   onSelectContact,
   resolveTrackerHeading,
+  resolveTrackerAltitude,
+  resolveTrackerSpeed,
   onMarkerRef,
 }: {
   contact: Contact;
   markerScale: number;
   onSelectContact?: (contact: Contact) => void;
   resolveTrackerHeading: (contact: Contact) => number | null;
+  resolveTrackerAltitude: (contact: Contact) => number | null;
+  resolveTrackerSpeed: (contact: Contact) => number | null;
   onMarkerRef: (key: string, ref: L.Marker | null) => void;
 }) {
   const markerRef = useRef<L.Marker | null>(null);
@@ -424,13 +461,30 @@ function ContactMapMarker({
   const lastHeardLabel =
     contact.last_seen != null ? formatTime(contact.last_seen) : 'Never heard by this server';
   const trackerHeading = isTracker ? resolveTrackerHeading(contact) : null;
+  const trackerAltitude = isTracker ? resolveTrackerAltitude(contact) : null;
+  const trackerSpeed = isTracker ? resolveTrackerSpeed(contact) : null;
+  const altitudeLabel = isTracker ? formatTrackerAltitudeM(trackerAltitude) : null;
+  const speedLabel = isTracker ? formatTrackerSpeedKmh(trackerSpeed) : null;
 
   const icon = useMemo(
     () =>
       isTracker
-        ? makeTrackerMarkerIcon(markerScale, trackerHeading)
+        ? makeTrackerMarkerIcon(
+            markerScale,
+            trackerHeading,
+            altitudeLabel,
+            speedLabel
+          )
         : makeRoleMarkerIcon(roleKey, markerOpacity, markerScale),
-    [isTracker, markerScale, trackerHeading, roleKey, markerOpacity]
+    [
+      isTracker,
+      markerScale,
+      trackerHeading,
+      altitudeLabel,
+      speedLabel,
+      roleKey,
+      markerOpacity,
+    ]
   );
 
   useEffect(() => {
@@ -501,11 +555,15 @@ function ContactMarkersLayer({
   focusedContact,
   onSelectContact,
   resolveTrackerHeading,
+  resolveTrackerAltitude,
+  resolveTrackerSpeed,
 }: {
   contacts: Contact[];
   focusedContact: Contact | null;
   onSelectContact?: (contact: Contact) => void;
   resolveTrackerHeading: (contact: Contact) => number | null;
+  resolveTrackerAltitude: (contact: Contact) => number | null;
+  resolveTrackerSpeed: (contact: Contact) => number | null;
 }) {
   const markerScale = useMapMarkerScale();
   const markerRefs = useRef<Record<string, L.Marker | null>>({});
@@ -545,6 +603,8 @@ function ContactMarkersLayer({
           markerScale={markerScale}
           onSelectContact={onSelectContact}
           resolveTrackerHeading={resolveTrackerHeading}
+          resolveTrackerAltitude={resolveTrackerAltitude}
+          resolveTrackerSpeed={resolveTrackerSpeed}
           onMarkerRef={setMarkerRef}
         />
       ))}
@@ -778,29 +838,41 @@ export function MapView({
   const mapLiveTrafficBootstrappedRef = useRef(false);
 
   const [historyHeadings, setHistoryHeadings] = useState<Record<string, number>>({});
+  const [trackerHistoryHints, setTrackerHistoryHints] = useState<
+    Record<string, TrackerHistoryHint>
+  >({});
+
+  const hasTrackers = useMemo(() => contacts.some((contact) => contact.is_tracker), [contacts]);
 
   useEffect(() => {
-    if (!contacts.some((c) => c.is_tracker && c.tracker_heading == null)) return;
+    if (!hasTrackers) return;
 
     api
       .getAllTrackerLocationHistory()
       .then((data) => {
         const headings: Record<string, number> = {};
+        const hints: Record<string, TrackerHistoryHint> = {};
         for (const { contact, history } of data) {
           for (let i = history.length - 1; i >= 0; i--) {
-            const heading = history[i].heading;
-            if (heading != null && Number.isFinite(heading)) {
-              headings[contact.public_key] = heading;
-              break;
+            const point = history[i];
+            hints[contact.public_key] = {
+              heading: point.heading,
+              altitude: point.altitude,
+              speed: point.speed,
+            };
+            if (point.heading != null && Number.isFinite(point.heading)) {
+              headings[contact.public_key] = point.heading;
             }
+            break;
           }
         }
         setHistoryHeadings(headings);
+        setTrackerHistoryHints(hints);
       })
       .catch((err) => {
-        console.error('Failed to bootstrap tracker headings:', err);
+        console.error('Failed to bootstrap tracker telemetry hints:', err);
       });
-  }, [contacts]);
+  }, [hasTrackers]);
 
   const resolveTrackerHeading = useCallback(
     (contact: Contact): number | null => {
@@ -811,6 +883,28 @@ export function MapView({
       return fromHistory != null && Number.isFinite(fromHistory) ? fromHistory : null;
     },
     [historyHeadings]
+  );
+
+  const resolveTrackerAltitude = useCallback(
+    (contact: Contact): number | null => {
+      if (contact.tracker_altitude != null && Number.isFinite(contact.tracker_altitude)) {
+        return contact.tracker_altitude;
+      }
+      const fromHistory = trackerHistoryHints[contact.public_key]?.altitude;
+      return fromHistory != null && Number.isFinite(fromHistory) ? fromHistory : null;
+    },
+    [trackerHistoryHints]
+  );
+
+  const resolveTrackerSpeed = useCallback(
+    (contact: Contact): number | null => {
+      if (contact.tracker_speed != null && Number.isFinite(contact.tracker_speed)) {
+        return contact.tracker_speed;
+      }
+      const fromHistory = trackerHistoryHints[contact.public_key]?.speed;
+      return fromHistory != null && Number.isFinite(fromHistory) ? fromHistory : null;
+    },
+    [trackerHistoryHints]
   );
 
   // Tracker location history (movement trails)
@@ -1252,6 +1346,8 @@ export function MapView({
             focusedContact={focusedContact}
             onSelectContact={onSelectContact}
             resolveTrackerHeading={resolveTrackerHeading}
+            resolveTrackerAltitude={resolveTrackerAltitude}
+            resolveTrackerSpeed={resolveTrackerSpeed}
           />
 
           {showPackets && <ParticleOverlay particles={particles} />}

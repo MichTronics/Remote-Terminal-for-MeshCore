@@ -155,6 +155,10 @@ export interface Contact {
   tracker_name: string | null;
   /** Last known heading in degrees from tracker GROUP_DATA packets (0 = north, clockwise). */
   tracker_heading?: number | null;
+  /** Last known altitude in metres from the most recent tracker packet. */
+  tracker_altitude?: number | null;
+  /** Last known speed in m/s from the most recent tracker packet. */
+  tracker_speed?: number | null;
 }
 
 export interface LocationHistory {

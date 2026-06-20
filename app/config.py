@@ -27,7 +27,7 @@ class Settings(BaseSettings):
         validation_alias="__CLOWNTOWN_DO_CLOCK_WRAPAROUND",
     )
     enable_local_private_key_export: bool = False
-    load_with_autoevict: bool = False
+    load_with_autoevict: bool = True
     skip_post_connect_sync: bool = False
     basic_auth_username: str = ""
     basic_auth_password: str = ""

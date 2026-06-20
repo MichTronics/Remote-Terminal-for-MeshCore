@@ -38,6 +38,7 @@ async def test_db():
         settings,
     )
     from app.repository import fanout as fanout_repo
+    from app.repository import spam_flood_episodes as spam_flood_episodes_repo
 
     db = Database(":memory:")
     await db.connect()
@@ -51,19 +52,22 @@ async def test_db():
         fanout_repo,
         repeater_telemetry,
         contact_telemetry,
+        spam_flood_episodes_repo,
     ]
     originals = [(mod, mod.db) for mod in submodules]
 
     for mod in submodules:
         mod.db = db
 
-    # Also patch the db reference used by the packets router for VACUUM
-    import app.routers.packets as packets_module
+    import app.database as database_module
     import app.packet_processor as packet_processor_module
+    import app.routers.packets as packets_module
 
+    original_database_db = database_module.db
     original_packets_db = packets_module.db
-    packets_module.db = db
     original_packet_processor_db = packet_processor_module.db
+    database_module.db = db
+    packets_module.db = db
     packet_processor_module.db = db
 
     try:
@@ -71,6 +75,7 @@ async def test_db():
     finally:
         for mod, original in originals:
             mod.db = original
+        database_module.db = original_database_db
         packets_module.db = original_packets_db
         packet_processor_module.db = original_packet_processor_db
         await db.disconnect()

@@ -10,7 +10,9 @@ import type {
   SpamRouteStatsResponse,
 } from '../types';
 import { Button } from './ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { SpamPacketTimelineSection } from './SpamPacketTimelineSection';
+import { cn } from '@/lib/utils';
 
 type WindowOption = 1 | 6 | 24 | 72 | 168;
 
@@ -168,13 +170,18 @@ function ClusterRouteDetails({ cluster }: { cluster: SpamFloodCluster }) {
           <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </a>
       )}
+      {cluster.origin_geo_hint && (
+        <div className="text-[0.8125rem] text-muted-foreground">{cluster.origin_geo_hint}</div>
+      )}
     </div>
   );
 }
 
+const MAX_EPISODE_REPORT_CLUSTERS = 5;
+
 function episodeReportClusters(episode: SpamFloodEpisode): SpamFloodCluster[] {
   if (episode.clusters.length > 0) {
-    return episode.clusters;
+    return episode.clusters.slice(0, MAX_EPISODE_REPORT_CLUSTERS);
   }
   const hop = episode.primary_origin_hop ?? episode.primary_entry_hop;
   if (!hop) return [];
@@ -201,6 +208,7 @@ function episodeReportClusters(episode: SpamFloodEpisode): SpamFloodCluster[] {
       origin_public_key: null,
       origin_lat: episode.primary_origin_lat,
       origin_lon: episode.primary_origin_lon,
+      origin_geo_hint: null,
       last_seen: episode.ended_at ?? episode.started_at,
       cluster_mode: null,
     },
@@ -209,6 +217,54 @@ function episodeReportClusters(episode: SpamFloodEpisode): SpamFloodCluster[] {
 
 function buildMapUrl(lat: number, lon: number): string {
   return `https://www.google.com/maps?q=${lat},${lon}`;
+}
+
+function primaryEpisodeCluster(episode: SpamFloodEpisode): SpamFloodCluster | null {
+  const clusters = episodeReportClusters(episode);
+  return clusters[0] ?? null;
+}
+
+function formatEpisodePrimaryNode(episode: SpamFloodEpisode): string {
+  const cluster = primaryEpisodeCluster(episode);
+  if (cluster) {
+    return formatClusterHotspotLabel(cluster);
+  }
+  const hop = episode.primary_origin_hop ?? episode.primary_entry_hop;
+  const name = episode.primary_origin_name ?? episode.primary_entry_name;
+  if (name && hop) return `${name} (${hop})`;
+  if (hop) return hop;
+  return '-';
+}
+
+function episodeLocationCoords(
+  cluster: SpamFloodCluster | null,
+  episode: SpamFloodEpisode,
+): { lat: number; lon: number } | null {
+  const lat = cluster?.origin_lat ?? cluster?.lat ?? episode.primary_origin_lat;
+  const lon = cluster?.origin_lon ?? cluster?.lon ?? episode.primary_origin_lon;
+  if (lat == null || lon == null) return null;
+  return { lat, lon };
+}
+
+function formatEpisodeLocationSummary(episode: SpamFloodEpisode): string {
+  const cluster = primaryEpisodeCluster(episode);
+  const coords = episodeLocationCoords(cluster, episode);
+  if (coords) {
+    return `${coords.lat.toFixed(3)}, ${coords.lon.toFixed(3)}`;
+  }
+  if (cluster?.origin_geo_hint) {
+    return cluster.origin_geo_hint;
+  }
+  return 'Unknown';
+}
+
+function EpisodeSummarySegment({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="inline-flex shrink-0 items-baseline gap-1">
+      <span className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span>{children}</span>
+    </span>
+  );
 }
 
 interface SpamRoutesViewProps {
@@ -748,6 +804,116 @@ function EpisodeHotspotCandidates({ clusters }: { clusters: SpamFloodCluster[] }
   );
 }
 
+function FloodEpisodeDetailDialog({
+  episode,
+  open,
+  onOpenChange,
+  onDelete,
+  deleting,
+}: {
+  episode: SpamFloodEpisode | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDelete: (episodeId: number) => void;
+  deleting: boolean;
+}) {
+  if (!episode) return null;
+
+  const reportClusters = episodeReportClusters(episode);
+  const inProgress = episode.ended_at == null;
+  const coords = episodeLocationCoords(primaryEpisodeCluster(episode), episode);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Flood report #{episode.id}</DialogTitle>
+          <DialogDescription>
+            {inProgress
+              ? 'Attack still in progress when this snapshot was saved.'
+              : 'Full hotspot analysis retained from the ended episode.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+            <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Started</div>
+            <div className="mt-1 text-sm">{formatSeen(episode.started_at)}</div>
+          </div>
+          <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+            <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Ended</div>
+            <div className="mt-1 text-sm">{inProgress ? 'In progress' : formatSeen(episode.ended_at)}</div>
+          </div>
+          <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+            <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Duration</div>
+            <div className="mt-1 text-sm tabular-nums">
+              {inProgress ? '…' : formatDuration(episode.duration_secs)}
+            </div>
+          </div>
+          <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+            <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Packets</div>
+            <div className="mt-1 text-sm tabular-nums">{episode.total_packets}</div>
+          </div>
+          <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+            <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Peak / window</div>
+            <div className="mt-1 text-sm tabular-nums">{episode.peak_packets_per_window}</div>
+          </div>
+          <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+            <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Vs baseline</div>
+            <div className="mt-1 text-sm tabular-nums">
+              {episode.anomaly_ratio != null ? `${episode.anomaly_ratio.toFixed(1)}×` : '-'}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+          <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Primary hotspot</div>
+          <div className="mt-1 text-sm font-medium">{formatEpisodePrimaryNode(episode)}</div>
+          {coords ? (
+            <a
+              href={buildMapUrl(coords.lat, coords.lon)}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex items-center gap-1 font-mono text-[0.8125rem] text-primary hover:underline"
+            >
+              {coords.lat.toFixed(5)}, {coords.lon.toFixed(5)}
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          ) : (
+            <div className="mt-1 text-[0.8125rem] text-muted-foreground">
+              {formatEpisodeLocationSummary(episode)}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h4 className="text-sm font-semibold">Hotspot candidates</h4>
+          <div className="mt-2">
+            {reportClusters.length > 0 ? (
+              <EpisodeHotspotCandidates clusters={reportClusters} />
+            ) : (
+              <span className="text-sm text-muted-foreground">No narrowed hotspots</span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            className="border-destructive/40 text-destructive hover:bg-destructive/10"
+            onClick={() => onDelete(episode.id)}
+            disabled={deleting}
+          >
+            <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+            Delete report
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FloodEpisodeLogSection({
   episodes,
   loading,
@@ -759,6 +925,7 @@ function FloodEpisodeLogSection({
 }) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [selectedEpisode, setSelectedEpisode] = useState<SpamFloodEpisode | null>(null);
 
   const handleDelete = async (episodeId: number) => {
     setDeletingId(episodeId);
@@ -766,6 +933,9 @@ function FloodEpisodeLogSection({
     try {
       await api.deleteSpamFloodEpisode(episodeId);
       onEpisodeDeleted(episodeId);
+      if (selectedEpisode?.id === episodeId) {
+        setSelectedEpisode(null);
+      }
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete flood report');
     } finally {
@@ -778,10 +948,8 @@ function FloodEpisodeLogSection({
       <div>
         <h3 className="text-sm font-semibold">Flood Alert History</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Persisted attack log with 14-day baseline context. Each ended episode keeps all
-          qualifying hotspot candidates (one source or many). Peak traffic shares are retained
-          during the post-flood hold even if a source stops early. Stuck in-progress rows usually
-          mean the server restarted mid-attack — delete them or restart once more to auto-close leftovers.
+          Compact summary of persisted attacks. Click a row for the full hotspot log (up to five
+          candidates). Stuck in-progress rows usually mean the server restarted mid-attack.
         </p>
       </div>
       {deleteError && (
@@ -789,84 +957,89 @@ function FloodEpisodeLogSection({
           {deleteError}
         </div>
       )}
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full min-w-[960px] text-sm">
-          <thead className="bg-muted/60 text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="px-3 py-2 text-left">Started</th>
-              <th className="px-3 py-2 text-right">Duration</th>
-              <th className="px-3 py-2 text-right">Packets</th>
-              <th className="px-3 py-2 text-right">Peak / Window</th>
-              <th className="px-3 py-2 text-right">Vs Baseline</th>
-              <th className="px-3 py-2 text-left">Hotspot Candidates</th>
-              <th className="px-3 py-2 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {episodes.map((episode) => {
-              const reportClusters = episodeReportClusters(episode);
-              const inProgress = episode.ended_at == null;
-              return (
-                <tr key={episode.id} className="hover:bg-muted/30">
-                  <td className="px-3 py-2">
-                    <div>{formatSeen(episode.started_at)}</div>
-                    {inProgress && (
-                      <div className="mt-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-destructive">
-                        In progress
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
+      <div className="space-y-2">
+        {episodes.map((episode) => {
+          const inProgress = episode.ended_at == null;
+          return (
+            <div
+              key={episode.id}
+              className="flex items-stretch gap-2 rounded-md border border-border bg-muted/10"
+            >
+              <button
+                type="button"
+                className={cn(
+                  'min-w-0 flex-1 rounded-md px-3 py-2 text-left text-xs transition-colors',
+                  'hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                )}
+                onClick={() => setSelectedEpisode(episode)}
+                aria-label={`Open flood report ${episode.id}`}
+              >
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <EpisodeSummarySegment label="Start">{formatSeen(episode.started_at)}</EpisodeSummarySegment>
+                  <span className="text-muted-foreground/50">·</span>
+                  <EpisodeSummarySegment label="End">
+                    {inProgress ? '…' : formatSeen(episode.ended_at)}
+                  </EpisodeSummarySegment>
+                  <span className="text-muted-foreground/50">·</span>
+                  <EpisodeSummarySegment label="Duration">
                     {inProgress ? '…' : formatDuration(episode.duration_secs)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">{episode.total_packets}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {episode.peak_packets_per_window}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {episode.anomaly_ratio != null ? `${episode.anomaly_ratio.toFixed(1)}x` : '-'}
-                  </td>
-                  <td className="px-3 py-2">
-                    {reportClusters.length > 0 ? (
-                      <EpisodeHotspotCandidates clusters={reportClusters} />
-                    ) : (
-                      <span className="text-muted-foreground">No narrowed hotspots</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="border-destructive/40 text-destructive hover:bg-destructive/10"
-                      onClick={() => void handleDelete(episode.id)}
-                      disabled={deletingId === episode.id}
-                      title="Delete flood report"
-                      aria-label={`Delete flood report ${episode.id}`}
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </Button>
-                  </td>
-                </tr>
-              );
-            })}
-            {!loading && episodes.length === 0 && (
-              <tr>
-                <td className="px-3 py-6 text-center text-muted-foreground" colSpan={7}>
-                  No flood episodes recorded yet.
-                </td>
-              </tr>
-            )}
-            {loading && (
-              <tr>
-                <td className="px-3 py-6 text-center text-muted-foreground" colSpan={7}>
-                  Loading flood history...
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                  </EpisodeSummarySegment>
+                  <span className="text-muted-foreground/50">·</span>
+                  <EpisodeSummarySegment label="Pkts">{episode.total_packets}</EpisodeSummarySegment>
+                  <span className="text-muted-foreground/50">·</span>
+                  <EpisodeSummarySegment label="Peak">{episode.peak_packets_per_window}</EpisodeSummarySegment>
+                  <span className="text-muted-foreground/50">·</span>
+                  <EpisodeSummarySegment label="#1">{formatEpisodePrimaryNode(episode)}</EpisodeSummarySegment>
+                  <span className="text-muted-foreground/50">·</span>
+                  <EpisodeSummarySegment label="Loc">
+                    <span className="font-mono text-[0.6875rem]">{formatEpisodeLocationSummary(episode)}</span>
+                  </EpisodeSummarySegment>
+                  {inProgress && (
+                    <>
+                      <span className="text-muted-foreground/50">·</span>
+                      <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-destructive">
+                        In progress
+                      </span>
+                    </>
+                  )}
+                </div>
+              </button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="my-1 mr-1 shrink-0 self-center border-destructive/40 text-destructive hover:bg-destructive/10"
+                onClick={() => void handleDelete(episode.id)}
+                disabled={deletingId === episode.id}
+                title="Delete flood report"
+                aria-label={`Delete flood report ${episode.id}`}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+          );
+        })}
+        {!loading && episodes.length === 0 && (
+          <div className="rounded-md border border-border px-3 py-6 text-center text-sm text-muted-foreground">
+            No flood episodes recorded yet.
+          </div>
+        )}
+        {loading && (
+          <div className="rounded-md border border-border px-3 py-6 text-center text-sm text-muted-foreground">
+            Loading flood history...
+          </div>
+        )}
       </div>
+
+      <FloodEpisodeDetailDialog
+        episode={selectedEpisode}
+        open={selectedEpisode != null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedEpisode(null);
+        }}
+        onDelete={(episodeId) => void handleDelete(episodeId)}
+        deleting={selectedEpisode != null && deletingId === selectedEpisode.id}
+      />
     </section>
   );
 }

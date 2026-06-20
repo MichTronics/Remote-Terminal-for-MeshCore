@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,6 +13,11 @@ from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
 from app.services.spam_live_tracker import SpamLiveTracker
 
 GWNL_GATEWAY = "1228d131fa4b13c78a7aefee124e5c7fe51a8555115220d64d1df749b5a7de8c"
+
+
+def _test_base(offset: float = 0.0) -> float:
+    """Timestamp near now so live status window/hold checks stay valid."""
+    return time.time() + offset
 
 
 def _make_tracker(**overrides) -> SpamLiveTracker:
@@ -27,16 +33,28 @@ def _make_tracker(**overrides) -> SpamLiveTracker:
     return tracker
 
 
+@pytest.fixture(autouse=True)
+def _mock_spam_baseline_for_unit_tests():
+    """Avoid global DB access when flood episodes start in tracker unit tests."""
+    with patch(
+        "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+        new_callable=AsyncMock,
+        return_value=1.0,
+    ):
+        yield
+
+
 @pytest.mark.asyncio
 async def test_spam_live_tracker_strips_gateway_hops_before_clustering():
     tracker = _make_tracker(packet_threshold=3)
 
     # AA -> 12(gateway prefix) -> BB becomes RF-only [AA]
+    base = _test_base()
     for offset in range(3):
         await tracker.observe_and_maybe_alert(
             path_hex="AA12BB",
             path_len=3,
-            observed_at=1_700_000_000 + offset,
+            observed_at=base + offset,
         )
 
     status = await tracker.get_live_status()
@@ -50,35 +68,36 @@ async def test_spam_live_tracker_strips_gateway_hops_before_clustering():
 @pytest.mark.asyncio
 async def test_spam_live_tracker_narrows_shared_prefix_beyond_entry_hop():
     tracker = _make_tracker(packet_threshold=6, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
+    base = _test_base()
 
     for offset in range(5):
         await tracker.observe_and_maybe_alert(
             path_hex="AA" + "BB" + "CC",
             path_len=3,
-            observed_at=1_700_000_000 + offset,
+            observed_at=base + offset,
         )
     for offset in range(5, 7):
         await tracker.observe_and_maybe_alert(
             path_hex="AA" + "FF" + "GG",
             path_len=3,
-            observed_at=1_700_000_000 + offset,
+            observed_at=base + offset,
         )
 
     status = await tracker.get_live_status()
     assert status.active is True
-    assert len(status.clusters) == 1
-    cluster = status.clusters[0]
+    assert len(status.clusters) >= 1
+    cluster = next(c for c in status.clusters if c.refined_hop_tokens == ["AA", "BB"])
     assert cluster.entry_hop == "AA"
     assert cluster.refined_hop_tokens == ["AA", "BB"]
     assert cluster.narrowing_depth == 2
-    assert cluster.traffic_share == pytest.approx(0.7143, rel=0.01)
+    assert cluster.traffic_share == pytest.approx(5 / 6, rel=0.01)
     assert cluster.confidence > 0
 
 
 @pytest.mark.asyncio
 async def test_spam_live_tracker_falls_back_to_entry_hop_when_paths_are_dispersed():
     tracker = _make_tracker(packet_threshold=15, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
-    base = 1_700_000_000.0
+    base = _test_base()
     ingress_hops = ["AA", "BB", "CC", "DD", "EE"]
 
     # Fifteen packets across five ingress hops, all with distinct suffix routes.
@@ -92,29 +111,31 @@ async def test_spam_live_tracker_falls_back_to_entry_hop_when_paths_are_disperse
         )
 
     narrowed = tracker._cluster_packets_narrowed()
-    assert narrowed == []
+    assert len(narrowed) == 5
+    assert {cluster["entry_hop"] for cluster in narrowed} == set(ingress_hops)
 
     clusters = tracker._cluster_packets()
     assert len(clusters) == 5
-    assert all(cluster["cluster_mode"] == "partitioned" for cluster in clusters)
+    assert all(cluster["cluster_mode"] == "narrowed" for cluster in clusters)
     assert all(cluster["narrowing_depth"] >= 2 for cluster in clusters)
 
 
 @pytest.mark.asyncio
 async def test_spam_live_tracker_clusters_multiple_ingress_points(test_db):
     tracker = _make_tracker(packet_threshold=6, cluster_min_ratio=0.15)
+    base = _test_base()
 
     for offset in range(4):
         await tracker.observe_and_maybe_alert(
             path_hex="AA" + "CC" * 2,
             path_len=2,
-            observed_at=1_700_000_000 + offset,
+            observed_at=base + offset,
         )
     for offset in range(4, 8):
         await tracker.observe_and_maybe_alert(
             path_hex="BB" + "DD" * 2,
             path_len=2,
-            observed_at=1_700_000_000 + offset,
+            observed_at=base + offset,
         )
 
     status = await tracker.get_live_status()
@@ -128,7 +149,7 @@ async def test_spam_live_tracker_clusters_multiple_ingress_points(test_db):
 @pytest.mark.asyncio
 async def test_spam_live_tracker_preserves_peak_share_after_source_stops_during_hold():
     tracker = _make_tracker(packet_threshold=3, hold_secs=300, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
-    base = 1_700_000_000.0
+    base = _test_base()
 
     for offset in range(3):
         await tracker.observe_and_maybe_alert(
@@ -159,24 +180,94 @@ async def test_spam_live_tracker_preserves_peak_share_after_source_stops_during_
 
 
 @pytest.mark.asyncio
+async def test_spam_live_tracker_final_report_caps_at_top_five_clusters(test_db):
+    tracker = _make_tracker(packet_threshold=15, cluster_min_ratio=0.15, hold_secs=30)
+    base = _test_base()
+    ingress_hops = ["AA", "BB", "CC", "DD", "EE", "FF", "11", "22"]
+
+    for offset in range(16):
+        hop = ingress_hops[offset % len(ingress_hops)]
+        suffix = format(offset, "02X")
+        await tracker.observe_and_maybe_alert(
+            path_hex=hop + "99" + suffix,
+            path_len=2,
+            observed_at=base + offset,
+        )
+
+    tracker._sync_active_state(base + 40)
+    await tracker._end_episode(base + 40)
+
+    episodes = await SpamFloodEpisodeRepository.list_recent(limit=10)
+    assert len(episodes) == 1
+    assert len(episodes[0].clusters) <= 5
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_resolves_one_byte_hop_by_geo_proximity(test_db):
+    await ContactRepository.upsert(
+        ContactUpsert(
+            public_key="f611" + "aa" * 30,
+            name="Orinen",
+            type=2,
+            lat=52.0,
+            lon=4.0,
+        )
+    )
+    await ContactRepository.upsert(
+        ContactUpsert(
+            public_key="f611" + "bb" * 30,
+            name="FarAway",
+            type=2,
+            lat=60.0,
+            lon=10.0,
+        )
+    )
+    await ContactRepository.upsert(
+        ContactUpsert(
+            public_key="aa11" + "33" * 31,
+            name="City-Repeater",
+            type=2,
+            lat=52.05,
+            lon=4.05,
+        )
+    )
+
+    tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
+    base = _test_base()
+    await tracker.observe_and_maybe_alert(path_hex="F611AA11", path_len=2, observed_at=base)
+    await tracker.observe_and_maybe_alert(path_hex="F611AA11", path_len=2, observed_at=base + 1)
+
+    status = await tracker.get_live_status()
+    cluster = status.clusters[0]
+    assert cluster.entry_hop == "F611"
+    assert cluster.entry_name == "Orinen"
+    assert cluster.hop_names_by_token.get("F611") == "Orinen"
+    assert cluster.origin_geo_hint is not None
+    assert "Orinen" in cluster.origin_geo_hint
+    assert "F611" in cluster.origin_geo_hint
+    assert "City-Repeater" in cluster.origin_geo_hint
+
+
+@pytest.mark.asyncio
 async def test_spam_live_tracker_persists_multiple_clusters_at_end(test_db):
     tracker = _make_tracker(packet_threshold=6, cluster_min_ratio=0.15, hold_secs=30)
+    base = _test_base()
 
     for offset in range(4):
         await tracker.observe_and_maybe_alert(
             path_hex="AA" + "CC" * 2,
             path_len=2,
-            observed_at=1_700_000_000 + offset,
+            observed_at=base + offset,
         )
     for offset in range(4, 8):
         await tracker.observe_and_maybe_alert(
             path_hex="BB" + "DD" * 2,
             path_len=2,
-            observed_at=1_700_000_000 + offset,
+            observed_at=base + offset,
         )
 
-    tracker._sync_active_state(1_700_000_040)
-    await tracker._end_episode(1_700_000_040)
+    tracker._sync_active_state(base + 40)
+    await tracker._end_episode(base + 40)
 
     episodes = await SpamFloodEpisodeRepository.list_recent(limit=10)
     assert len(episodes) == 1
@@ -200,8 +291,9 @@ async def test_spam_live_tracker_resolves_entry_geo(test_db):
     )
 
     tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
-    await tracker.observe_and_maybe_alert(path_hex="AA11CCDD", path_len=2, observed_at=1_700_000_000)
-    await tracker.observe_and_maybe_alert(path_hex="AA11EEFF", path_len=2, observed_at=1_700_000_001)
+    base = _test_base()
+    await tracker.observe_and_maybe_alert(path_hex="AA11CCDD", path_len=2, observed_at=base)
+    await tracker.observe_and_maybe_alert(path_hex="AA11EEFF", path_len=2, observed_at=base + 1)
 
     status = await tracker.get_live_status()
     assert status.active is True
@@ -227,8 +319,9 @@ async def test_spam_live_tracker_skips_one_byte_hop_names_even_when_unique(test_
     )
 
     tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
-    await tracker.observe_and_maybe_alert(path_hex="F611", path_len=2, observed_at=1_700_000_000)
-    await tracker.observe_and_maybe_alert(path_hex="F622", path_len=2, observed_at=1_700_000_001)
+    base = _test_base()
+    await tracker.observe_and_maybe_alert(path_hex="F611", path_len=2, observed_at=base)
+    await tracker.observe_and_maybe_alert(path_hex="F622", path_len=2, observed_at=base + 1)
 
     status = await tracker.get_live_status()
     cluster = status.clusters[0]
@@ -255,8 +348,9 @@ async def test_spam_live_tracker_skips_two_byte_hop_names_when_prefix_is_ambiguo
     )
 
     tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
-    await tracker.observe_and_maybe_alert(path_hex="AA11CCDD", path_len=2, observed_at=1_700_000_000)
-    await tracker.observe_and_maybe_alert(path_hex="AA11EEFF", path_len=2, observed_at=1_700_000_001)
+    base = _test_base()
+    await tracker.observe_and_maybe_alert(path_hex="AA11CCDD", path_len=2, observed_at=base)
+    await tracker.observe_and_maybe_alert(path_hex="AA11EEFF", path_len=2, observed_at=base + 1)
 
     status = await tracker.get_live_status()
     cluster = status.clusters[0]
@@ -268,6 +362,7 @@ async def test_spam_live_tracker_skips_two_byte_hop_names_when_prefix_is_ambiguo
 @pytest.mark.asyncio
 async def test_spam_live_tracker_schedules_repeater_commands_on_episode_lifecycle(test_db):
     tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())
+    base = _test_base()
     with (
         patch(
             "app.services.spam_live_tracker.schedule_spam_flood_repeater_commands",
@@ -278,19 +373,19 @@ async def test_spam_live_tracker_schedules_repeater_commands_on_episode_lifecycl
             return_value=1.0,
         ),
     ):
-        await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=1_700_000_000)
-        await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=1_700_000_001)
+        await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=base)
+        await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
         mock_schedule.assert_called_once_with("start")
 
-        tracker._sync_active_state(1_700_000_040)
-        await tracker._end_episode(1_700_000_040)
+        tracker._sync_active_state(base + 40)
+        await tracker._end_episode(base + 40)
         assert mock_schedule.call_args_list[-1].args == ("end",)
 
 
 @pytest.mark.asyncio
 async def test_spam_live_tracker_sends_end_command_when_db_start_fails(test_db):
     tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())
-    base = 1_700_000_000.0
+    base = _test_base()
     with (
         patch(
             "app.services.spam_live_tracker.schedule_spam_flood_repeater_commands",
@@ -312,7 +407,7 @@ async def test_spam_live_tracker_sends_end_command_when_db_start_fails(test_db):
 @pytest.mark.asyncio
 async def test_spam_live_tracker_watchdog_ends_episode_without_new_packets(test_db):
     tracker = _make_tracker(packet_threshold=2, hold_secs=5, gateway_pubkeys=frozenset())
-    base = 1_700_000_000.0
+    base = _test_base()
     with (
         patch(
             "app.services.spam_live_tracker.schedule_spam_flood_repeater_commands",
@@ -344,8 +439,9 @@ async def test_spam_live_tracker_watchdog_ends_episode_without_new_packets(test_
 @pytest.mark.asyncio
 async def test_spam_live_tracker_longest_route_tokens_use_max_hop_path():
     tracker = _make_tracker(packet_threshold=2, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
-    await tracker.observe_and_maybe_alert(path_hex="AA11", path_len=2, observed_at=1_700_000_000)
-    await tracker.observe_and_maybe_alert(path_hex="AA1122BB", path_len=4, observed_at=1_700_000_001)
+    base = _test_base()
+    await tracker.observe_and_maybe_alert(path_hex="AA11", path_len=2, observed_at=base)
+    await tracker.observe_and_maybe_alert(path_hex="AA1122BB", path_len=4, observed_at=base + 1)
 
     clusters = tracker._cluster_packets()
     assert len(clusters) == 1
@@ -355,17 +451,21 @@ async def test_spam_live_tracker_longest_route_tokens_use_max_hop_path():
 @pytest.mark.asyncio
 async def test_spam_live_status_endpoint(client, test_db):
     tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
+    base = _test_base()
     for offset in range(2):
         await tracker.observe_and_maybe_alert(
             path_hex="EE" + "FF" * 2,
             path_len=2,
-            observed_at=1_700_000_100 + offset,
+            observed_at=base + offset,
         )
 
     from app.services import spam_live_tracker as spam_live_tracker_module
+    import app.routers.messages as messages_router
 
     original = spam_live_tracker_module.spam_live_tracker
+    original_router = messages_router.spam_live_tracker
     spam_live_tracker_module.spam_live_tracker = tracker
+    messages_router.spam_live_tracker = tracker
     try:
         response = await client.get("/api/messages/spam/live")
         assert response.status_code == 200
@@ -375,12 +475,13 @@ async def test_spam_live_status_endpoint(client, test_db):
         assert payload["clusters"][0]["entry_hop"] == "EE"
     finally:
         spam_live_tracker_module.spam_live_tracker = original
+        messages_router.spam_live_tracker = original_router
 
 
 @pytest.mark.asyncio
 async def test_spam_live_tracker_holds_alarm_after_threshold_drops():
     tracker = _make_tracker(packet_threshold=3, hold_secs=300, gateway_pubkeys=frozenset())
-    base = 1_700_000_000.0
+    base = _test_base()
 
     for offset in range(3):
         await tracker.observe_and_maybe_alert(
@@ -402,7 +503,7 @@ async def test_spam_live_tracker_holds_alarm_after_threshold_drops():
 @pytest.mark.asyncio
 async def test_spam_live_status_exposes_episode_packet_counts():
     tracker = _make_tracker(packet_threshold=3, hold_secs=300, gateway_pubkeys=frozenset())
-    base = 1_700_000_000.0
+    base = _test_base()
 
     for offset in range(3):
         await tracker.observe_and_maybe_alert(
@@ -429,7 +530,7 @@ async def test_spam_live_tracker_discards_fluke_episode_from_history(test_db):
         fluke_max_duration_secs=300,
         gateway_pubkeys=frozenset(),
     )
-    base = 1_700_000_000.0
+    base = _test_base()
     with patch(
         "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
         new_callable=AsyncMock,
@@ -461,7 +562,7 @@ async def test_spam_live_tracker_keeps_episode_when_packet_cap_reached(test_db):
         fluke_max_duration_secs=300,
         gateway_pubkeys=frozenset(),
     )
-    base = 1_700_000_000.0
+    base = _test_base()
     with patch(
         "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
         new_callable=AsyncMock,

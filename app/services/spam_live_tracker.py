@@ -21,13 +21,18 @@ from app.services.spam_gateway_filter import (
     is_gateway_hop,
 )
 from app.services.spam_path_analysis import (
+    build_one_byte_geo_hint,
     cluster_confidence,
     consolidate_geo_hotspots,
+    contact_has_valid_coords,
     estimate_origin_geo,
     format_route,
     hop_suspect_score,
+    nearest_named_chain_landmark,
+    pick_nearest_coords_to_point,
     split_entry_partitioned_clusters,
     split_path_clusters,
+    DEFAULT_ONE_BYTE_GEO_MATCH_KM,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,7 +173,10 @@ class SpamLiveTracker:
     def _retention_cutoff(self, current_time: float) -> float:
         if self._detected_at is not None:
             horizon = self._episode_retention_horizon()
-            return max(self._detected_at, current_time - horizon)
+            # Keep the full trigger window that led to detection, plus the episode horizon.
+            episode_floor = self._detected_at - self.window_secs
+            episode_horizon = current_time - horizon
+            return min(episode_floor, episode_horizon)
         return current_time - self.window_secs
 
     def _trim_window(self, current_time: float) -> None:
@@ -252,6 +260,7 @@ class SpamLiveTracker:
                     "origin_public_key": cluster.origin_public_key or existing.origin_public_key,
                     "origin_lat": cluster.origin_lat if cluster.origin_lat is not None else existing.origin_lat,
                     "origin_lon": cluster.origin_lon if cluster.origin_lon is not None else existing.origin_lon,
+                    "origin_geo_hint": cluster.origin_geo_hint or existing.origin_geo_hint,
                     "dominant_route": cluster.dominant_route or existing.dominant_route,
                     "hop_tokens": cluster.hop_tokens or existing.hop_tokens,
                     "refined_route": cluster.refined_route or existing.refined_route,
@@ -274,9 +283,6 @@ class SpamLiveTracker:
     def _episode_peak_clusters_display(self) -> list[SpamFloodCluster]:
         clusters = self._sorted_peak_clusters()
         return self._apply_report_limit_models(clusters)
-
-    def _all_episode_peak_clusters(self) -> list[SpamFloodCluster]:
-        return self._sorted_peak_clusters()
 
     def _sorted_peak_clusters(self) -> list[SpamFloodCluster]:
         clusters = list(self._episode_peak_clusters.values())
@@ -435,6 +441,64 @@ class SpamLiveTracker:
         self._last_status = status
         return status
 
+    async def _apply_one_byte_geo_resolution(
+        self,
+        hop_tokens: list[str],
+        hop_geos: dict[str, dict[str, Any]],
+        *,
+        ref_lat: float | None,
+        ref_lon: float | None,
+        priority_hops: list[str],
+    ) -> str | None:
+        """Resolve 1-byte hop tokens via nearest known contact to the reference geo."""
+        if ref_lat is None or ref_lon is None:
+            return None
+
+        origin_geo_hint: str | None = None
+        for hop in hop_tokens:
+            if hop_geos.get(hop, {}).get("name"):
+                continue
+            unique = await ContactRepository.get_by_key_prefix(hop)
+            if unique is not None:
+                continue
+
+            candidates = await ContactRepository.list_geo_by_key_prefix(hop)
+            candidate_points = [
+                (contact, float(contact.lat), float(contact.lon))
+                for contact in candidates
+                if contact_has_valid_coords(contact.lat, contact.lon)
+            ]
+            nearest = pick_nearest_coords_to_point(candidate_points, ref_lat, ref_lon)
+            if nearest is None:
+                continue
+            contact, distance_km = nearest
+            if distance_km > DEFAULT_ONE_BYTE_GEO_MATCH_KM:
+                continue
+
+            hop_geos[hop] = {
+                "name": contact.name,
+                "public_key": contact.public_key,
+                "lat": float(contact.lat),
+                "lon": float(contact.lon),
+            }
+
+            if origin_geo_hint is None and hop in priority_hops:
+                landmark = nearest_named_chain_landmark(
+                    hop_tokens,
+                    hop_geos,
+                    ref_lat,
+                    ref_lon,
+                    exclude_hop=hop,
+                )
+                origin_geo_hint = build_one_byte_geo_hint(
+                    contact.name or hop,
+                    hop,
+                    distance_km,
+                    landmark,
+                )
+
+        return origin_geo_hint
+
     async def _enrich_clusters(self, clusters: list[dict[str, Any]]) -> list[SpamFloodCluster]:
         enriched_clusters: list[SpamFloodCluster] = []
         for cluster in clusters:
@@ -444,8 +508,36 @@ class SpamLiveTracker:
                 dict.fromkeys([*refined_tokens, *longest_tokens[:_MAX_DISPLAY_ROUTE_HOPS]])
             )
             hop_geos = await self._lookup_prefix_geos(lookup_tokens)
-            entry_geo = hop_geos.get(cluster["entry_hop"], {})
+            preliminary_origin = estimate_origin_geo(refined_tokens, hop_geos)
+            ref_lat = preliminary_origin.lat if preliminary_origin is not None else None
+            ref_lon = preliminary_origin.lon if preliminary_origin is not None else None
+            if ref_lat is None or ref_lon is None:
+                chain_origin = estimate_origin_geo(lookup_tokens, hop_geos)
+                if chain_origin is not None:
+                    ref_lat = chain_origin.lat
+                    ref_lon = chain_origin.lon
+            if ref_lat is None or ref_lon is None:
+                entry_geo = hop_geos.get(cluster["entry_hop"], {})
+                ref_lat = entry_geo.get("lat")
+                ref_lon = entry_geo.get("lon")
+            priority_hops = list(
+                dict.fromkeys(
+                    [
+                        *( [preliminary_origin.hop] if preliminary_origin and preliminary_origin.hop else [] ),
+                        cluster["entry_hop"],
+                        *(refined_tokens[:1] if refined_tokens else []),
+                    ]
+                )
+            )
+            origin_geo_hint = await self._apply_one_byte_geo_resolution(
+                lookup_tokens,
+                hop_geos,
+                ref_lat=ref_lat,
+                ref_lon=ref_lon,
+                priority_hops=priority_hops,
+            )
             origin = estimate_origin_geo(refined_tokens, hop_geos)
+            entry_geo = hop_geos.get(cluster["entry_hop"], {})
             hop_names_by_token = {
                 hop: geo["name"]
                 for hop, geo in hop_geos.items()
@@ -482,6 +574,7 @@ class SpamLiveTracker:
                     origin_public_key=origin.public_key if origin is not None else None,
                     origin_lat=origin.lat if origin is not None else None,
                     origin_lon=origin.lon if origin is not None else None,
+                    origin_geo_hint=origin_geo_hint,
                     last_seen=int(cluster["last_seen"]),
                     cluster_mode=cluster.get("cluster_mode"),
                 )
@@ -661,7 +754,7 @@ class SpamLiveTracker:
         if cluster_raw:
             enriched = self._focus_geo_clusters(await self._enrich_clusters(cluster_raw))
             self._update_episode_peak_clusters(enriched)
-            self._episode_last_clusters = self._all_episode_peak_clusters()
+            self._episode_last_clusters = self._episode_peak_clusters_display()
         try:
             await SpamFloodEpisodeRepository.update_progress(
                 episode_id=self._episode_db_id,
@@ -685,9 +778,9 @@ class SpamLiveTracker:
         if cluster_raw:
             final_clusters = self._focus_geo_clusters(await self._enrich_clusters(cluster_raw))
             self._update_episode_peak_clusters(final_clusters)
-            final_clusters = self._all_episode_peak_clusters()
+            final_clusters = self._episode_peak_clusters_display()
         elif self._episode_peak_clusters:
-            final_clusters = self._all_episode_peak_clusters()
+            final_clusters = self._episode_peak_clusters_display()
         elif self._episode_last_clusters:
             final_clusters = self._apply_report_limit_models(self._episode_last_clusters)
         else:

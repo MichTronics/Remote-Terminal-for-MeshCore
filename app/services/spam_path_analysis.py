@@ -11,6 +11,7 @@ from typing import Any, Callable, TypeVar
 DEFAULT_MAX_HOP_DISTANCE_KM = 10.0
 DEFAULT_TOP_HOTSPOTS = 5
 DEFAULT_GEO_MERGE_RADIUS_KM = 35.0
+DEFAULT_ONE_BYTE_GEO_MATCH_KM = 75.0
 
 RecordT = TypeVar("RecordT")
 ClusterT = TypeVar("ClusterT")
@@ -37,6 +38,72 @@ class OriginEstimate:
     lat: float | None
     lon: float | None
     geo_chain_valid: bool
+
+
+def contact_has_valid_coords(lat: float | None, lon: float | None) -> bool:
+    return lat is not None and lon is not None and not (lat == 0.0 and lon == 0.0)
+
+
+def pick_nearest_coords_to_point(
+    points: list[tuple[Any, float, float]],
+    ref_lat: float,
+    ref_lon: float,
+) -> tuple[Any, float] | None:
+    """Return the nearest item and its distance in km from (ref_lat, ref_lon)."""
+    best_item: Any | None = None
+    best_distance = float("inf")
+    for item, lat, lon in points:
+        distance_km = haversine_distance_km(ref_lat, ref_lon, lat, lon)
+        if distance_km < best_distance:
+            best_distance = distance_km
+            best_item = item
+    if best_item is None:
+        return None
+    return best_item, best_distance
+
+
+def nearest_named_chain_landmark(
+    hop_tokens: list[str] | tuple[str, ...],
+    hop_geos: dict[str, dict[str, Any]],
+    ref_lat: float,
+    ref_lon: float,
+    *,
+    exclude_hop: str | None = None,
+) -> str | None:
+    """Nearest resolved hop name along the path to a reference coordinate."""
+    best_name: str | None = None
+    best_distance = float("inf")
+    for hop in hop_tokens:
+        if hop == exclude_hop:
+            continue
+        geo = hop_geos.get(hop)
+        if geo is None:
+            continue
+        name = geo.get("name")
+        lat = geo.get("lat")
+        lon = geo.get("lon")
+        if not name or not contact_has_valid_coords(lat, lon):
+            continue
+        distance_km = haversine_distance_km(ref_lat, ref_lon, float(lat), float(lon))
+        if distance_km < best_distance:
+            best_distance = distance_km
+            best_name = str(name)
+    return best_name
+
+
+def build_one_byte_geo_hint(
+    name: str,
+    hop: str,
+    distance_km: float,
+    landmark_name: str | None,
+) -> str:
+    rounded_km = max(1, int(round(distance_km)))
+    if landmark_name and landmark_name.casefold() != name.casefold():
+        return (
+            f"{name} ({hop}) seems near {landmark_name} "
+            f"(~{rounded_km} km from estimated source)"
+        )
+    return f"{name} ({hop}) is ~{rounded_km} km from the estimated source"
 
 
 def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -90,8 +157,13 @@ def narrow_dominant_prefix(
         parent = prefix[:-1]
         parent_count = prefix_counts.get(parent, total) if parent else total
         child_concentration = count / parent_count if parent_count else 1.0
-        # Skip fake deepening where every parent-path child continues unchanged.
-        if depth > 1 and child_concentration >= 0.99:
+        matching_paths = [path for path in paths if path[:depth] == prefix]
+        # Skip fake deepening only when the prefix already spans every matched path.
+        if (
+            depth > 1
+            and child_concentration >= 0.99
+            and all(len(path) <= depth for path in matching_paths)
+        ):
             continue
         score = depth * (share**2)
         if score <= best_score:

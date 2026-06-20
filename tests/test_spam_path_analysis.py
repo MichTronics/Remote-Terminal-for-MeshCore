@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from app.services.spam_path_analysis import (
+    build_one_byte_geo_hint,
     consolidate_geo_hotspots,
     estimate_origin_geo,
     hop_suspect_score,
@@ -163,3 +164,16 @@ def test_hop_suspect_score_favors_source_side_hops():
         ("BB", "AA"),
     ]
     assert hop_suspect_score("AA", observations) > hop_suspect_score("BB", observations)
+
+
+def test_build_one_byte_geo_hint_mentions_landmark_when_present():
+    hint = build_one_byte_geo_hint("Orinen", "F6", 8.2, "City-Repeater")
+    assert "Orinen" in hint
+    assert "F6" in hint
+    assert "City-Repeater" in hint
+    assert "8 km" in hint
+
+
+def test_build_one_byte_geo_hint_without_landmark():
+    hint = build_one_byte_geo_hint("Orinen", "F6", 12.6, None)
+    assert hint == "Orinen (F6) is ~13 km from the estimated source"

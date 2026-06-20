@@ -630,6 +630,10 @@ class SpamFloodCluster(BaseModel):
     origin_lon: float | None = Field(
         default=None, description="Estimated spam-origin longitude from narrowed prefix geo chain"
     )
+    origin_geo_hint: str | None = Field(
+        default=None,
+        description="Human-readable geo disambiguation for 1-byte hops near the estimated source",
+    )
     last_seen: int = Field(description="Unix timestamp of the newest packet in this cluster")
     cluster_mode: str | None = Field(
         default=None,

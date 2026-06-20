@@ -433,6 +433,7 @@ export interface SpamFloodCluster {
   origin_public_key: string | null;
   origin_lat: number | null;
   origin_lon: number | null;
+  origin_geo_hint?: string | null;
   last_seen: number;
   cluster_mode: string | null;
 }

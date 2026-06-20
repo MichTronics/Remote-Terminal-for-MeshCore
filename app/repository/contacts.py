@@ -237,6 +237,25 @@ class ContactRepository:
         return ContactRepository._row_to_contact(rows[0])
 
     @staticmethod
+    async def list_geo_by_key_prefix(prefix: str, *, limit: int = 100) -> list[Contact]:
+        """Contacts matching a key prefix that have usable GPS coordinates."""
+        async with db.readonly() as conn:
+            async with conn.execute(
+                """
+                SELECT * FROM contacts
+                WHERE public_key LIKE ?
+                  AND lat IS NOT NULL
+                  AND lon IS NOT NULL
+                  AND NOT (lat = 0.0 AND lon = 0.0)
+                ORDER BY public_key
+                LIMIT ?
+                """,
+                (f"{prefix.lower()}%", limit),
+            ) as cursor:
+                rows = list(await cursor.fetchall())
+        return [ContactRepository._row_to_contact(row) for row in rows]
+
+    @staticmethod
     async def _get_prefix_matches(prefix: str, limit: int = 2) -> list[Contact]:
         """Get contacts matching a key prefix, up to limit."""
         async with db.readonly() as conn:

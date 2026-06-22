@@ -88,6 +88,18 @@ CREATE TABLE IF NOT EXISTS contact_advert_paths (
     FOREIGN KEY (public_key) REFERENCES contacts(public_key) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS contact_advert_neighbors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_key TEXT NOT NULL,
+    neighbor_hop TEXT NOT NULL,
+    path_hash_mode INTEGER NOT NULL DEFAULT 0,
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    heard_count INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(public_key, neighbor_hop, path_hash_mode),
+    FOREIGN KEY (public_key) REFERENCES contacts(public_key) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS contact_name_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     public_key TEXT NOT NULL,
@@ -176,6 +188,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_type_received_conversation
     ON messages(type, received_at, conversation_key);
 CREATE INDEX IF NOT EXISTS idx_contact_advert_paths_recent
     ON contact_advert_paths(public_key, last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_contact_advert_neighbors_hop_recent
+    ON contact_advert_neighbors(neighbor_hop, path_hash_mode, last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_contact_advert_neighbors_contact_recent
+    ON contact_advert_neighbors(public_key, last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_contact_name_history_key
     ON contact_name_history(public_key, last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_repeater_telemetry_pk_ts

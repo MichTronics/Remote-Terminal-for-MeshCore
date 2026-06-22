@@ -1,4 +1,5 @@
 from app.repository.channels import ChannelRepository
+from app.repository.contact_advert_neighbors import ContactAdvertNeighborRepository
 from app.repository.contacts import (
     AmbiguousPublicKeyPrefixError,
     ContactAdvertPathRepository,
@@ -16,6 +17,7 @@ __all__ = [
     "AmbiguousPublicKeyPrefixError",
     "AppSettingsRepository",
     "ChannelRepository",
+    "ContactAdvertNeighborRepository",
     "ContactAdvertPathRepository",
     "ContactNameHistoryRepository",
     "ContactRepository",

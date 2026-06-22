@@ -43,6 +43,7 @@ from app.models import (
 from app.path_utils import calculate_packet_hash
 from app.repository import (
     ChannelRepository,
+    ContactAdvertNeighborRepository,
     ContactAdvertPathRepository,
     ContactRepository,
     MessageRepository,
@@ -81,6 +82,7 @@ async def _maybe_track_live_spam_flood(packet_info: PacketInfo | None, timestamp
             category=classify_packet_info(packet_info),
             path_hex=packet_info.path.hex() if packet_info.path else "",
             path_len=packet_info.path_length,
+            path_hash_size=packet_info.path_hash_size,
             observed_at=timestamp,
             source_key=source.source_key if source else None,
             source_label=source.source_label if source else None,
@@ -817,6 +819,13 @@ async def _process_advertisement(
         timestamp=timestamp,
         max_paths=10,
         hop_count=new_path_len,
+    )
+    await ContactAdvertNeighborRepository.record_observation(
+        public_key=advert.public_key.lower(),
+        path_hex=new_path_hex,
+        hop_count=new_path_len,
+        timestamp=timestamp,
+        path_hash_size=packet_info.path_hash_size,
     )
     promoted_keys = await promote_prefix_contacts_for_contact(
         public_key=advert.public_key,

@@ -7,6 +7,7 @@ import pytest
 from app.models import Contact, ContactUpsert
 from app.repository import (
     AppSettingsRepository,
+    ContactAdvertNeighborRepository,
     ContactAdvertPathRepository,
     ContactNameHistoryRepository,
     ContactRepository,
@@ -398,6 +399,132 @@ class TestContactAdvertPathRepository:
         assert by_key[repeater_a][0].path == "02"
         assert by_key[repeater_b][0].path == ""
         assert by_key[repeater_b][0].next_hop is None
+
+
+class TestContactAdvertNeighborRepository:
+    """Test first-hop advert neighbor persistence for triangulation hints."""
+
+    @pytest.mark.asyncio
+    async def test_record_observation_upserts_neighbor_and_prunes_stale(self, test_db):
+        contact_key = "aa" * 32
+        await ContactRepository.upsert({"public_key": contact_key, "name": "Node-A", "type": 1})
+
+        recorded = await ContactAdvertNeighborRepository.record_observation(
+            public_key=contact_key,
+            path_hex="0F1122",
+            hop_count=2,
+            timestamp=1_000_000,
+            path_hash_size=1,
+        )
+        assert recorded is True
+
+        neighbors = await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop(
+            "0F",
+            path_hash_mode=0,
+            now=1_000_000,
+        )
+        assert len(neighbors) == 1
+        assert neighbors[0].public_key == contact_key
+
+        await ContactAdvertNeighborRepository.record_observation(
+            public_key=contact_key,
+            path_hex="0F3344",
+            hop_count=2,
+            timestamp=1_000_010,
+            path_hash_size=1,
+        )
+        neighbors = await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop(
+            "0F",
+            path_hash_mode=0,
+            now=1_000_010,
+        )
+        assert len(neighbors) == 1
+
+        stale_cutoff = 1_000_010 + (7 * 24 * 3600) + 1
+        neighbors = await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop(
+            "0F",
+            path_hash_mode=0,
+            now=stale_cutoff,
+        )
+        assert neighbors == []
+
+        deleted = await ContactAdvertNeighborRepository.prune_stale(now=stale_cutoff)
+        assert deleted >= 0
+
+    @pytest.mark.asyncio
+    async def test_empty_or_direct_path_records_nothing(self, test_db):
+        contact_key = "bb" * 32
+        await ContactRepository.upsert({"public_key": contact_key, "name": "Node-B", "type": 1})
+
+        assert (
+            await ContactAdvertNeighborRepository.record_observation(
+                public_key=contact_key,
+                path_hex="",
+                hop_count=0,
+                timestamp=1000,
+            )
+            is False
+        )
+        assert await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop("AA") == []
+
+    @pytest.mark.asyncio
+    async def test_neighbor_lookup_respects_path_hash_mode(self, test_db):
+        import time
+
+        now = int(time.time())
+        one_byte_key = "aa" * 32
+        two_byte_key = "bb" * 32
+        await ContactRepository.upsert({"public_key": one_byte_key, "name": "OneByte", "type": 1})
+        await ContactRepository.upsert({"public_key": two_byte_key, "name": "TwoByte", "type": 1})
+
+        await ContactAdvertNeighborRepository.record_observation(
+            public_key=one_byte_key,
+            path_hex="AA11",
+            hop_count=2,
+            timestamp=now,
+            path_hash_size=1,
+        )
+        await ContactAdvertNeighborRepository.record_observation(
+            public_key=two_byte_key,
+            path_hex="AA112233",
+            hop_count=2,
+            timestamp=now,
+            path_hash_size=2,
+        )
+
+        one_byte_neighbors = await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop(
+            "AA",
+            path_hash_mode=0,
+            now=now,
+        )
+        two_byte_neighbors = await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop(
+            "AA11",
+            path_hash_mode=1,
+            now=now,
+        )
+        assert [contact.name for contact in one_byte_neighbors] == ["OneByte"]
+        assert [contact.name for contact in two_byte_neighbors] == ["TwoByte"]
+        assert (
+            await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop(
+                "AA",
+                path_hash_mode=1,
+            )
+            == []
+        )
+
+    @pytest.mark.asyncio
+    async def test_contact_delete_cascades_neighbor_rows(self, test_db):
+        contact_key = "cc" * 32
+        await ContactRepository.upsert({"public_key": contact_key, "name": "Node-C", "type": 1})
+        await ContactAdvertNeighborRepository.record_observation(
+            public_key=contact_key,
+            path_hex="AA",
+            hop_count=1,
+            timestamp=1000,
+            path_hash_size=1,
+        )
+        await ContactRepository.delete(contact_key)
+        assert await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop("AA") == []
 
 
 class TestContactNameHistoryRepository:

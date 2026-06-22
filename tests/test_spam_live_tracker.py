@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models import ContactUpsert
-from app.repository import ContactRepository
+from app.repository import ContactAdvertNeighborRepository, ContactRepository
 from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
 from app.services.spam_live_tracker import SpamLiveTracker
 
@@ -247,6 +247,50 @@ async def test_spam_live_tracker_resolves_one_byte_hop_by_geo_proximity(test_db)
     assert "Orinen" in cluster.origin_geo_hint
     assert "F611" in cluster.origin_geo_hint
     assert "City-Repeater" in cluster.origin_geo_hint
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_resolves_ambiguous_one_byte_hop_via_advert_neighbors(test_db):
+    """When no pubkey prefix matches, use contacts known to neighbor that hop."""
+    neighbor_contact_key = "ee11" + "44" * 31
+    await ContactRepository.upsert(
+        ContactUpsert(
+            public_key=neighbor_contact_key,
+            name="Via-Neighbor",
+            type=2,
+            lat=52.0,
+            lon=4.0,
+        )
+    )
+    await ContactAdvertNeighborRepository.record_observation(
+        public_key=neighbor_contact_key,
+        path_hex="0F1122",
+        hop_count=2,
+        timestamp=int(time.time()),
+        path_hash_size=1,
+    )
+    await ContactRepository.upsert(
+        ContactUpsert(
+            public_key="aa11" + "33" * 31,
+            name="City-Repeater",
+            type=2,
+            lat=52.05,
+            lon=4.05,
+        )
+    )
+
+    tracker = _make_tracker(packet_threshold=2, gateway_pubkeys=frozenset())
+    base = _test_base()
+    await tracker.observe_and_maybe_alert(path_hex="0FAA11", path_len=2, observed_at=base)
+    await tracker.observe_and_maybe_alert(path_hex="0FAA11", path_len=2, observed_at=base + 1)
+
+    status = await tracker.get_live_status()
+    cluster = status.clusters[0]
+    assert cluster.entry_hop == "0F"
+    assert cluster.hop_names_by_token.get("0F") == "Via-Neighbor"
+    assert cluster.origin_name == "Via-Neighbor"
+    assert cluster.origin_lat == pytest.approx(52.0)
+    assert cluster.origin_lon == pytest.approx(4.0)
 
 
 @pytest.mark.asyncio

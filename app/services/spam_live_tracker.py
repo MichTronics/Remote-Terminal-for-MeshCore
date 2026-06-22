@@ -10,9 +10,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.models import SpamFloodCluster, SpamLiveStatus
-from app.path_utils import split_path_hex, hop_allows_prefix_name_lookup
+from app.path_utils import (
+    hash_mode_from_hop_token,
+    hop_allows_prefix_name_lookup,
+    split_path_hex,
+    split_path_hex_for_hash_size,
+)
+from app.repository.contact_advert_neighbors import ContactAdvertNeighborRepository
 from app.repository.contacts import ContactRepository
 from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
+from app.services.spam_advert_neighbors import enrich_hop_geos_from_advert_neighbors
 from app.services.spam_baseline import SpamBaselineService
 from app.services.spam_detection_settings import is_fluke_episode
 from app.services.spam_flood_repeater_automation import schedule_spam_flood_repeater_commands
@@ -58,6 +65,7 @@ class _PacketRecord:
     entry_node: str
     full_rf_path: tuple[str, ...]
     category: str
+    path_hash_mode: int | None = None
     source_key: str | None = None
     source_label: str | None = None
 
@@ -141,9 +149,23 @@ class SpamLiveTracker:
         return is_gateway_hop(hop, self._gateway_pubkeys)
 
     @staticmethod
-    def _rf_path_tokens(path_hex: str, path_len: int) -> list[str]:
+    def _rf_path_tokens(
+        path_hex: str,
+        path_len: int,
+        *,
+        path_hash_size: int | None = None,
+    ) -> list[str]:
         if not path_hex or path_len <= 0:
             return []
+        if path_hash_size is not None and 1 <= int(path_hash_size) <= 3:
+            return [
+                token.upper()
+                for token in split_path_hex_for_hash_size(
+                    path_hex.upper(),
+                    path_len,
+                    int(path_hash_size),
+                )
+            ]
         return [token.upper() for token in split_path_hex(path_hex.upper(), path_len)]
 
     def _strip_to_rf_path(self, hop_tokens: list[str]) -> list[str]:
@@ -160,20 +182,30 @@ class SpamLiveTracker:
         category: str,
         path_hex: str | None,
         path_len: int | None,
+        path_hash_size: int | None = None,
         observed_at: int | float | None = None,
         source_key: str | None = None,
         source_label: str | None = None,
     ) -> bool:
         """Record a packet observation; return True when state may have changed."""
         current_time = float(observed_at if observed_at is not None else time.time())
-        tokens = self._rf_path_tokens(path_hex or "", int(path_len or 0))
+        hash_size = int(path_hash_size) if path_hash_size is not None else None
+        tokens = self._rf_path_tokens(
+            path_hex or "",
+            int(path_len or 0),
+            path_hash_size=hash_size,
+        )
         rf_only = self._strip_to_rf_path(tokens)
+        path_hash_mode = None
+        if hash_size is not None and 1 <= hash_size <= 3:
+            path_hash_mode = hash_size - 1
 
         record = _PacketRecord(
             timestamp=current_time,
             entry_node=rf_only[0] if rf_only else "",
             full_rf_path=tuple(rf_only),
             category=category,
+            path_hash_mode=path_hash_mode,
             source_key=source_key,
             source_label=source_label,
         )
@@ -399,6 +431,13 @@ class SpamLiveTracker:
         longest_path, _ = path_counts.most_common(1)[0]
         return list(longest_path)[:max_hops]
 
+    @staticmethod
+    def _dominant_path_hash_mode(records: list[_PacketRecord]) -> int | None:
+        modes = [record.path_hash_mode for record in records if record.path_hash_mode is not None]
+        if not modes:
+            return None
+        return Counter(modes).most_common(1)[0][0]
+
     def _build_cluster_results(
         self,
         narrowed_clusters: list[tuple[Any, list[_PacketRecord]]],
@@ -416,6 +455,7 @@ class SpamLiveTracker:
                     "dominant_path_tokens": list(dominant_path),
                     "longest_path_tokens": self._longest_path_tokens(matched_records),
                     "refined_hop_tokens": list(narrowed.hop_tokens),
+                    "path_hash_mode": self._dominant_path_hash_mode(matched_records),
                     "traffic_share": narrowed.traffic_share,
                     "concentration": narrowed.concentration,
                     "narrowing_depth": narrowed.narrowing_depth,
@@ -490,6 +530,7 @@ class SpamLiveTracker:
                     "dominant_path_tokens": list(dominant_path),
                     "longest_path_tokens": self._longest_path_tokens(matched_records),
                     "refined_hop_tokens": [entry_hop],
+                    "path_hash_mode": self._dominant_path_hash_mode(matched_records),
                     "traffic_share": len(matched_records) / total if total else 0.0,
                     "concentration": 1.0,
                     "narrowing_depth": 1,
@@ -559,6 +600,7 @@ class SpamLiveTracker:
         ref_lat: float | None,
         ref_lon: float | None,
         priority_hops: list[str],
+        default_path_hash_mode: int | None = None,
     ) -> str | None:
         """Resolve 1-byte hop tokens via nearest known contact to the reference geo."""
         if ref_lat is None or ref_lon is None:
@@ -578,6 +620,24 @@ class SpamLiveTracker:
                 for contact in candidates
                 if contact_has_valid_coords(contact.lat, contact.lon)
             ]
+            if not candidate_points:
+                hop_hash_mode = hash_mode_from_hop_token(hop)
+                if hop_hash_mode is None:
+                    hop_hash_mode = default_path_hash_mode
+                try:
+                    advert_neighbors = (
+                        await ContactAdvertNeighborRepository.list_contacts_for_neighbor_hop(
+                            hop,
+                            path_hash_mode=hop_hash_mode,
+                        )
+                    )
+                except RuntimeError:
+                    advert_neighbors = []
+                candidate_points = [
+                    (contact, float(contact.lat), float(contact.lon))
+                    for contact in advert_neighbors
+                    if contact_has_valid_coords(contact.lat, contact.lon)
+                ]
             nearest = pick_nearest_coords_to_point(candidate_points, ref_lat, ref_lon)
             if nearest is None:
                 continue
@@ -618,6 +678,12 @@ class SpamLiveTracker:
                 dict.fromkeys([*refined_tokens, *longest_tokens[:_MAX_DISPLAY_ROUTE_HOPS]])
             )
             hop_geos = await self._lookup_prefix_geos(lookup_tokens)
+            cluster_hash_mode = cluster.get("path_hash_mode")
+            await enrich_hop_geos_from_advert_neighbors(
+                lookup_tokens,
+                hop_geos,
+                default_path_hash_mode=cluster_hash_mode,
+            )
             preliminary_origin = estimate_origin_geo(refined_tokens, hop_geos)
             ref_lat = preliminary_origin.lat if preliminary_origin is not None else None
             ref_lon = preliminary_origin.lon if preliminary_origin is not None else None
@@ -645,6 +711,7 @@ class SpamLiveTracker:
                 ref_lat=ref_lat,
                 ref_lon=ref_lon,
                 priority_hops=priority_hops,
+                default_path_hash_mode=cluster_hash_mode,
             )
             origin = estimate_origin_geo(refined_tokens, hop_geos)
             entry_geo = hop_geos.get(cluster["entry_hop"], {})
@@ -1173,6 +1240,7 @@ class SpamLiveTracker:
         category: str = "dm",
         path_hex: str | None,
         path_len: int | None,
+        path_hash_size: int | None = None,
         observed_at: int | float | None = None,
         source_key: str | None = None,
         source_label: str | None = None,
@@ -1184,6 +1252,7 @@ class SpamLiveTracker:
             category=category,
             path_hex=path_hex,
             path_len=path_len,
+            path_hash_size=path_hash_size,
             observed_at=observed_at,
             source_key=source_key,
             source_label=source_label,

@@ -573,6 +573,8 @@ export interface RawPacket {
     node_id?: string | null;
     is_tracker?: boolean | null;
   } | null;
+  /** Client-only: distinct RF paths already seen for this stored packet row. */
+  feed_seen_paths?: string[];
 }
 
 export interface AppSettings {

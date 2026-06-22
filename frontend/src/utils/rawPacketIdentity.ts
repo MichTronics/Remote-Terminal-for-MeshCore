@@ -1,6 +1,9 @@
 import { MeshCoreDecoder } from '@michaelhart/meshcore-decoder';
 import type { RawPacket } from '../types';
 
+/** After this many distinct paths, show the latest observation instead of longest. */
+export const RAW_PACKET_LATEST_PATH_THRESHOLD = 3;
+
 /**
  * Get path length from a packet by decoding it.
  * Returns 0 if decoding fails or no path exists.
@@ -15,6 +18,63 @@ function getPathLength(packet: RawPacket): number {
   } catch {
     return 0;
   }
+}
+
+function getPathSignature(packet: RawPacket): string {
+  try {
+    const decoded = MeshCoreDecoder.decode(packet.data);
+    if (decoded.isValid && decoded.path?.length) {
+      return decoded.path.join(',');
+    }
+  } catch {
+    // Fall back to raw bytes when the decoder cannot extract a path.
+  }
+  return packet.data ? `raw:${packet.data}` : '';
+}
+
+function registerPathObservation(
+  existingPaths: string[] | undefined,
+  pathSignature: string
+): string[] {
+  if (!pathSignature) {
+    return existingPaths ? [...existingPaths] : [];
+  }
+  const seen = existingPaths ? [...existingPaths] : [];
+  if (!seen.includes(pathSignature)) {
+    seen.push(pathSignature);
+  }
+  return seen;
+}
+
+function mergePacketDataPreferringLongestPath(
+  existing: RawPacket,
+  incoming: RawPacket
+): RawPacket {
+  const existingPathLen = getPathLength(existing);
+  const newPathLen = getPathLength(incoming);
+
+  let shouldUseIncomingData = false;
+  if (existingPathLen === 0 && newPathLen === 0) {
+    shouldUseIncomingData = incoming.data.length >= existing.data.length;
+  } else {
+    shouldUseIncomingData = newPathLen >= existingPathLen;
+  }
+
+  if (shouldUseIncomingData) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    data: existing.data,
+  };
+}
+
+function appendWithCap(packets: RawPacket[], maxPackets: number): RawPacket[] {
+  if (packets.length > maxPackets) {
+    return packets.slice(-maxPackets);
+  }
+  return packets;
 }
 
 /**
@@ -34,43 +94,28 @@ export function appendRawPacketUnique(
   packet: RawPacket,
   maxPackets: number
 ): RawPacket[] {
-  // Use DB row ID for deduplication - same packet updates existing box
+  const pathSignature = getPathSignature(packet);
+
   const existingIndex = prev.findIndex((p) => p.id === packet.id);
-  
-  if (existingIndex !== -1) {
-    // Update existing packet, but preserve the longest path seen
-    const existing = prev[existingIndex];
-    const existingPathLen = getPathLength(existing);
-    const newPathLen = getPathLength(packet);
-    
-    let shouldUpdate = false;
-    
-    if (existingPathLen === 0 && newPathLen === 0) {
-      // Decoder failed for both - fall back to comparing raw data length
-      shouldUpdate = packet.data.length >= existing.data.length;
-    } else {
-      // Use decoded path length comparison
-      shouldUpdate = newPathLen >= existingPathLen;
-    }
-    
-    const updated = [...prev];
-    if (shouldUpdate) {
-      // New packet has longer or equal path - use it
-      updated[existingIndex] = packet;
-    } else {
-      // Existing packet has longer path - keep its data but update other fields
-      updated[existingIndex] = {
-        ...packet,
-        data: existing.data, // Preserve the longer path
-      };
-    }
-    return updated;
+  if (existingIndex === -1) {
+    const nextPacket: RawPacket = {
+      ...packet,
+      feed_seen_paths: registerPathObservation(undefined, pathSignature),
+    };
+    return appendWithCap([...prev, nextPacket], maxPackets);
   }
 
-  // New packet - append to end
-  const updated = [...prev, packet];
-  if (updated.length > maxPackets) {
-    return updated.slice(-maxPackets);
-  }
-  return updated;
+  const existing = prev[existingIndex];
+  const feedSeenPaths = registerPathObservation(existing.feed_seen_paths, pathSignature);
+  const useLatestPath = feedSeenPaths.length >= RAW_PACKET_LATEST_PATH_THRESHOLD;
+
+  const merged: RawPacket = {
+    ...(useLatestPath
+      ? packet
+      : mergePacketDataPreferringLongestPath(existing, packet)),
+    feed_seen_paths: feedSeenPaths,
+  };
+
+  const withoutExisting = prev.filter((_, index) => index !== existingIndex);
+  return appendWithCap([...withoutExisting, merged], maxPackets);
 }

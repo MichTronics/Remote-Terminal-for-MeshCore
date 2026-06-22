@@ -44,35 +44,51 @@ describe('appendRawPacketUnique', () => {
     expect(afterSecond[0].data).toBe('bb');
   });
 
-  it('preserves longest path when packets arrive out of order', () => {
-    // Create packets with actual path data (simplified for test)
-    // In reality, these would be full MeshCore packet hex
-    const sevenHops = createPacket({ 
-      id: 10, 
-      observation_id: 200, 
-      data: '00010203040506' // Shorter path
-    });
-    const nineHops = createPacket({ 
-      id: 10, 
-      observation_id: 201, 
-      data: '000102030405060708' // Longer path
-    });
-    const eightHops = createPacket({ 
-      id: 10, 
-      observation_id: 202, 
-      data: '0001020304050607' // Medium path
-    });
+  it('preserves longest path when only two distinct paths have been seen', () => {
+    const shortPath = createPacket({ id: 10, observation_id: 200, data: 'aa' });
+    const longPath = createPacket({ id: 10, observation_id: 201, data: 'aabbcc' });
+    const shortAgain = createPacket({ id: 10, observation_id: 202, data: 'aa' });
 
-    // Arrive in order: 7, 9, 8
     let state: RawPacket[] = [];
-    state = appendRawPacketUnique(state, sevenHops, 500);
-    state = appendRawPacketUnique(state, nineHops, 500);
-    state = appendRawPacketUnique(state, eightHops, 500);
+    state = appendRawPacketUnique(state, shortPath, 500);
+    state = appendRawPacketUnique(state, longPath, 500);
+    state = appendRawPacketUnique(state, shortAgain, 500);
 
-    // Should preserve the 9-hop path data even though 8-hop arrived last
     expect(state).toHaveLength(1);
-    expect(state[0].observation_id).toBe(202); // Latest observation
-    expect(state[0].data).toBe('000102030405060708'); // But longest path data
+    expect(state[0].observation_id).toBe(202);
+    expect(state[0].data).toBe('aabbcc');
+    expect(state[0].feed_seen_paths).toHaveLength(2);
+  });
+
+  it('uses the latest path after three distinct paths have been seen', () => {
+    const first = createPacket({ id: 20, observation_id: 400, data: 'aa11ccdd' });
+    const second = createPacket({ id: 20, observation_id: 401, data: 'bb22ccdd' });
+    const third = createPacket({ id: 20, observation_id: 402, data: 'cc33ccdd' });
+    const fourth = createPacket({ id: 20, observation_id: 403, data: 'dd' });
+
+    let state: RawPacket[] = [];
+    state = appendRawPacketUnique(state, first, 500);
+    state = appendRawPacketUnique(state, second, 500);
+    state = appendRawPacketUnique(state, third, 500);
+    state = appendRawPacketUnique(state, fourth, 500);
+
+    expect(state).toHaveLength(1);
+    expect(state[0].observation_id).toBe(403);
+    expect(state[0].data).toBe('dd');
+    expect(state[0].feed_seen_paths).toHaveLength(4);
+  });
+
+  it('moves updated packets to the end of the feed list', () => {
+    const other = createPacket({ id: 2, observation_id: 2, data: 'ff' });
+    const first = createPacket({ id: 1, observation_id: 1, data: 'aa' });
+    const repeat = createPacket({ id: 1, observation_id: 3, data: 'aabb' });
+
+    let state = appendRawPacketUnique([], first, 500);
+    state = appendRawPacketUnique(state, other, 500);
+    state = appendRawPacketUnique(state, repeat, 500);
+
+    expect(state.map((packet) => packet.id)).toEqual([2, 1]);
+    expect(state[1].data).toBe('aabb');
   });
 
   it('updates to longer path when it arrives later', () => {

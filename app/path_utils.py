@@ -160,6 +160,50 @@ def hop_allows_prefix_name_lookup(hop: str) -> bool:
     return (len(token) // 2) >= 2
 
 
+def hash_mode_from_hash_size(hash_size: int) -> int | None:
+    """Convert bytes-per-hop (1..3) to path_hash_mode (0..2)."""
+    if hash_size < 1 or hash_size > 3:
+        return None
+    return hash_size - 1
+
+
+def hash_mode_from_hop_token(hop: str) -> int | None:
+    """Derive path_hash_mode from a hop token's hex width."""
+    token = hop.strip()
+    if not token or len(token) % 2 != 0:
+        return None
+    return hash_mode_from_hash_size(len(token) // 2)
+
+
+def first_hop_hex_for_hash_size(path_hex: str, hop_count: int, hash_size: int) -> str | None:
+    """Extract the first hop using explicit bytes-per-hop width from the packet."""
+    if not path_hex or hop_count <= 0 or hash_size < 1 or hash_size > 3:
+        return None
+    chars_per_hop = hash_size * 2
+    normalized = path_hex.strip()
+    if len(normalized) < chars_per_hop:
+        return None
+    expected_len = chars_per_hop * hop_count
+    if len(normalized) != expected_len:
+        return first_hop_hex(path_hex, hop_count)
+    return normalized[:chars_per_hop].upper()
+
+
+def split_path_hex_for_hash_size(path_hex: str, hop_count: int, hash_size: int) -> list[str]:
+    """Split a path using explicit bytes-per-hop width when the wire path is well-formed."""
+    if not path_hex or hop_count <= 0 or hash_size < 1 or hash_size > 3:
+        return []
+    chars_per_hop = hash_size * 2
+    normalized = path_hex.upper()
+    expected_len = chars_per_hop * hop_count
+    if len(normalized) != expected_len:
+        return split_path_hex(normalized, hop_count)
+    return [
+        normalized[index : index + chars_per_hop]
+        for index in range(0, expected_len, chars_per_hop)
+    ]
+
+
 def first_hop_hex(path_hex: str, hop_count: int) -> str | None:
     """Extract the first hop identifier from a path hex string.
 

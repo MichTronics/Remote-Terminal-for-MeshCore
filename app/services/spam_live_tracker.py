@@ -107,6 +107,7 @@ class SpamLiveTracker:
     _episode_source_filter: SourceFilterPlan | None = field(default=None, init=False)
     _episode_open: bool = field(default=False, init=False)
     _repeater_automation_armed: bool = field(default=False, init=False)
+    _repeater_start_dispatched: bool = field(default=False, init=False)
     _episode_watchdog_task: asyncio.Task[None] | None = field(default=None, init=False)
     _episode_lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
@@ -584,9 +585,10 @@ class SpamLiveTracker:
 
     async def get_live_status(self) -> SpamLiveStatus:
         current_time = time.time()
-        was_active = self._active
-        self._sync_active_state(current_time)
-        await self._sync_episode_lifecycle(current_time, was_active=was_active)
+        async with self._episode_lifecycle_lock:
+            was_active = self._active
+            self._sync_active_state(current_time)
+            await self._apply_episode_lifecycle_transitions(current_time, was_active=was_active)
         clusters = self._cluster_packets() if self._active and self._clustering_records() else []
         status = await self._build_status_async(current_time, clusters)
         self._last_status = status
@@ -1096,6 +1098,7 @@ class SpamLiveTracker:
             current_time
         )
         schedule_spam_flood_repeater_commands("start")
+        self._repeater_start_dispatched = True
         self._ensure_episode_watchdog()
 
     def _cancel_episode_watchdog(self) -> None:
@@ -1123,12 +1126,12 @@ class SpamLiveTracker:
 
     async def _maybe_finalize_expired_episode(self) -> None:
         current_time = time.time()
-        was_active = self._active
-        self._sync_active_state(current_time)
-        if not (was_active and not self._active):
-            return
-
-        await self._sync_episode_lifecycle(current_time, was_active=was_active)
+        async with self._episode_lifecycle_lock:
+            was_active = self._active
+            self._sync_active_state(current_time)
+            if not (was_active and not self._active):
+                return
+            await self._apply_episode_lifecycle_transitions(current_time, was_active=was_active)
         from app.websocket import broadcast_event
 
         status = await self._build_status_async(current_time, clusters=[])
@@ -1136,28 +1139,32 @@ class SpamLiveTracker:
         self._last_broadcast_at = 0.0
         broadcast_event("spam_flood_alert", status.model_dump())
 
-    async def _sync_episode_lifecycle(self, current_time: float, *, was_active: bool) -> None:
-        """Serialize episode open/progress/end so DB rows cannot outlive live state."""
-        async with self._episode_lifecycle_lock:
-            if self._active:
-                if not self._episode_open:
-                    self._open_flood_episode(current_time)
-                    await self._start_episode(current_time)
-                else:
-                    self._episode_peak_window = max(
-                        self._episode_peak_window,
-                        self._trigger_window_count(current_time),
-                    )
-                self._episode_total_packets = len(self._episode_packet_records)
-                if self._episode_db_id is not None:
-                    self._schedule_episode_progress()
+    async def _apply_episode_lifecycle_transitions(
+        self,
+        current_time: float,
+        *,
+        was_active: bool,
+    ) -> None:
+        """Open, progress, or end the flood episode. Caller must hold _episode_lifecycle_lock."""
+        if self._active:
+            if not self._episode_open:
+                self._open_flood_episode(current_time)
+                await self._start_episode(current_time)
+            else:
+                self._episode_peak_window = max(
+                    self._episode_peak_window,
+                    self._trigger_window_count(current_time),
+                )
+            self._episode_total_packets = len(self._episode_packet_records)
+            if self._episode_db_id is not None:
+                self._schedule_episode_progress()
 
-            if was_active and not self._active:
-                await self._end_episode(current_time)
-            elif not self._active and self._episode_db_id is not None:
-                await self._end_episode(current_time, force=True)
-            elif not self._active and not self._episode_open:
-                await self._close_stale_open_episode_rows(current_time)
+        if was_active and not self._active:
+            await self._end_episode(current_time)
+        elif not self._active and self._episode_db_id is not None:
+            await self._end_episode(current_time, force=True)
+        elif not self._active and not self._episode_open:
+            await self._close_stale_open_episode_rows(current_time)
 
     async def _close_stale_open_episode_rows(self, current_time: float) -> None:
         """Close DB rows left open when in-memory episode state was lost."""
@@ -1175,6 +1182,7 @@ class SpamLiveTracker:
             self._cancel_episode_watchdog()
         self._episode_open = False
         self._repeater_automation_armed = False
+        self._repeater_start_dispatched = False
         self._episode_db_id = None
         self._episode_total_packets = 0
         self._episode_peak_window = 0
@@ -1218,7 +1226,7 @@ class SpamLiveTracker:
         if not self._episode_open:
             if not force or self._episode_db_id is None:
                 return
-            should_send_end = False
+            should_send_end = self._repeater_start_dispatched
         else:
             should_send_end = self._repeater_automation_armed
             self._episode_open = False
@@ -1280,6 +1288,7 @@ class SpamLiveTracker:
         finally:
             if should_send_end:
                 schedule_spam_flood_repeater_commands("end")
+            self._repeater_start_dispatched = False
             self._reset_episode_state(skip_watchdog_cancel=True)
 
     async def observe_and_maybe_alert(
@@ -1295,20 +1304,21 @@ class SpamLiveTracker:
     ) -> SpamLiveStatus | None:
         """Observe a packet and return enriched status when an alert should fire."""
         current_time = float(observed_at if observed_at is not None else time.time())
-        was_active = self._active
-        should_broadcast = self.observe_packet(
-            category=category,
-            path_hex=path_hex,
-            path_len=path_len,
-            path_hash_size=path_hash_size,
-            observed_at=observed_at,
-            source_key=source_key,
-            source_label=source_label,
-        )
+        async with self._episode_lifecycle_lock:
+            was_active = self._active
+            should_broadcast = self.observe_packet(
+                category=category,
+                path_hex=path_hex,
+                path_len=path_len,
+                path_hash_size=path_hash_size,
+                observed_at=observed_at,
+                source_key=source_key,
+                source_label=source_label,
+            )
+            await self._apply_episode_lifecycle_transitions(current_time, was_active=was_active)
+            ended_transition = was_active and not self._active
 
-        await self._sync_episode_lifecycle(current_time, was_active=was_active)
-
-        if not should_broadcast and not (was_active and not self._active):
+        if not should_broadcast and not ended_transition:
             return None
 
         if not self._active:

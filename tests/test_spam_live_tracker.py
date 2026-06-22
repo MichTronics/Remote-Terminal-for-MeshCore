@@ -480,6 +480,59 @@ async def test_spam_live_tracker_sends_end_command_when_db_start_fails(test_db):
 
 
 @pytest.mark.asyncio
+async def test_spam_live_tracker_schedules_start_when_threshold_crossed_concurrently(test_db):
+    """Concurrent packet observers must not skip the repeater start command."""
+    tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())
+    base = _test_base()
+    with (
+        patch(
+            "app.services.spam_live_tracker.schedule_spam_flood_repeater_commands",
+        ) as mock_schedule,
+        patch(
+            "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+            new_callable=AsyncMock,
+            return_value=1.0,
+        ),
+    ):
+        await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=base)
+        await asyncio.gather(
+            tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1),
+            tracker.observe_and_maybe_alert(path_hex="AADD", path_len=2, observed_at=base + 2),
+        )
+
+        start_calls = [call for call in mock_schedule.call_args_list if call.args == ("start",)]
+        assert len(start_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_force_finalize_sends_end_when_start_dispatched(test_db):
+    tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())
+    base = _test_base()
+    with (
+        patch(
+            "app.services.spam_live_tracker.schedule_spam_flood_repeater_commands",
+        ) as mock_schedule,
+        patch(
+            "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+            new_callable=AsyncMock,
+            return_value=1.0,
+        ),
+        patch(
+            "app.services.spam_live_tracker.SpamFloodEpisodeRepository.finalize",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=base)
+        await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
+        assert mock_schedule.call_args_list[0].args == ("start",)
+
+        tracker._episode_open = False
+        tracker._repeater_automation_armed = False
+        await tracker._end_episode(base + 40, force=True)
+        assert mock_schedule.call_args_list[-1].args == ("end",)
+
+
+@pytest.mark.asyncio
 async def test_spam_live_tracker_discards_episode_row_when_flood_ends_before_db_start(test_db):
     """Regression: a slow create_started must not leave ended_at=NULL rows behind."""
     tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())

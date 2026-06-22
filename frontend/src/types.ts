@@ -440,6 +440,41 @@ export interface SpamFloodCluster {
   flood_source_label?: string | null;
 }
 
+export interface SpamCategoryFloodStatus {
+  category: string;
+  category_label: string;
+  active: boolean;
+  window_secs: number;
+  packet_threshold: number;
+  total_packets: number;
+  episode_packets: number;
+  episode_window_secs: number;
+  detected_at: number | null;
+  baseline_packets_per_window: number | null;
+  anomaly_ratio: number | null;
+  episode_id: number | null;
+  cluster_min_share: number;
+  clusters_stale: boolean;
+  primary_category: string | null;
+  category_counts: Record<string, number>;
+  category_labels: Record<string, string>;
+  likely_source_key: string | null;
+  likely_source_label: string | null;
+  likely_source_name: string | null;
+  likely_source_public_key: string | null;
+  likely_source_lat: number | null;
+  likely_source_lon: number | null;
+  likely_source_geo_hint?: string | null;
+  likely_source_traffic_share: number | null;
+  likely_source_packet_count: number | null;
+  likely_source_kind: string | null;
+  source_filter_active?: boolean;
+  source_filter_mode?: string | null;
+  source_filter_excluded_packets?: number;
+  source_filter_labels?: string[];
+  clusters: SpamFloodCluster[];
+}
+
 export interface SpamLiveStatus {
   active: boolean;
   window_secs: number;
@@ -471,6 +506,7 @@ export interface SpamLiveStatus {
   source_filter_excluded_packets?: number;
   source_filter_labels?: string[];
   clusters: SpamFloodCluster[];
+  category_floods?: SpamCategoryFloodStatus[];
 }
 
 export interface SpamFloodEpisode {

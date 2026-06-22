@@ -33,6 +33,10 @@ def _make_tracker(**overrides) -> SpamLiveTracker:
     return tracker
 
 
+def _cat(tracker: SpamLiveTracker, category: str = "dm"):
+    return tracker._category_state(category)
+
+
 @pytest.mark.asyncio
 async def test_spam_baseline_counts_packet_observations(test_db):
     async with test_db.tx() as conn:
@@ -81,11 +85,12 @@ async def test_spam_live_tracker_persists_flood_episode(test_db):
             observed_at=base + offset,
         )
 
-    assert tracker._episode_db_id is not None
-    assert tracker._episode_total_packets == 2
+    assert _cat(tracker).episode_db_id is not None
+    assert _cat(tracker).episode_total_packets == 2
 
-    tracker._sync_active_state(base + 35)
-    await tracker._end_episode(base + 35)
+    state = _cat(tracker)
+    tracker._sync_active_state(state, base + 35)
+    await tracker._end_episode(state, base + 35)
     tracker._cancel_episode_watchdog()
 
     episodes = await SpamFloodEpisodeRepository.list_recent(limit=10)

@@ -34,6 +34,10 @@ def _make_tracker(**overrides) -> SpamLiveTracker:
     return tracker
 
 
+def _cat(tracker: SpamLiveTracker, category: str = "dm") -> object:
+    return tracker._category_state(category)
+
+
 @pytest.fixture(autouse=True)
 def _mock_spam_baseline_for_unit_tests():
     """Avoid global DB access when flood episodes start in tracker unit tests."""
@@ -111,11 +115,11 @@ async def test_spam_live_tracker_falls_back_to_entry_hop_when_paths_are_disperse
             observed_at=base + offset,
         )
 
-    narrowed = tracker._cluster_packets_narrowed()
+    narrowed = tracker._cluster_packets_narrowed(_cat(tracker))
     assert len(narrowed) == 5
     assert {cluster["entry_hop"] for cluster in narrowed} == set(ingress_hops)
 
-    clusters = tracker._cluster_packets()
+    clusters = tracker._cluster_packets(_cat(tracker))
     assert len(clusters) == 5
     assert all(cluster["cluster_mode"] == "narrowed" for cluster in clusters)
     assert all(cluster["narrowing_depth"] >= 2 for cluster in clusters)
@@ -195,8 +199,8 @@ async def test_spam_live_tracker_final_report_caps_at_top_five_clusters(test_db)
             observed_at=base + offset,
         )
 
-    tracker._sync_active_state(base + 40)
-    await tracker._end_episode(base + 40)
+    tracker._sync_active_state(_cat(tracker), base + 40)
+    await tracker._end_episode(_cat(tracker), base + 40)
 
     episodes = await SpamFloodEpisodeRepository.list_recent(limit=10)
     assert len(episodes) == 1
@@ -311,8 +315,8 @@ async def test_spam_live_tracker_persists_multiple_clusters_at_end(test_db):
             observed_at=base + offset,
         )
 
-    tracker._sync_active_state(base + 40)
-    await tracker._end_episode(base + 40)
+    tracker._sync_active_state(_cat(tracker), base + 40)
+    await tracker._end_episode(_cat(tracker), base + 40)
     tracker._cancel_episode_watchdog()
 
     episodes = await SpamFloodEpisodeRepository.list_recent(limit=10)
@@ -423,8 +427,10 @@ async def test_spam_live_tracker_schedules_repeater_commands_on_episode_lifecycl
         await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
         mock_schedule.assert_called_once_with("start")
 
-        tracker._sync_active_state(base + 40)
-        await tracker._end_episode(base + 40)
+        state = _cat(tracker)
+        tracker._sync_active_state(state, base + 40)
+        await tracker._end_episode(state, base + 40)
+        tracker._sync_repeater_automation()
         assert mock_schedule.call_args_list[-1].args == ("end",)
 
 
@@ -448,11 +454,13 @@ async def test_spam_live_tracker_end_episode_runs_once_when_called_concurrently(
     ):
         await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=base)
         await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
-        tracker._sync_active_state(base + 40)
+        state = _cat(tracker)
+        tracker._sync_active_state(state, base + 40)
         await asyncio.gather(
-            tracker._end_episode(base + 40),
-            tracker._end_episode(base + 40),
+            tracker._end_episode(state, base + 40),
+            tracker._end_episode(state, base + 40),
         )
+        tracker._sync_repeater_automation()
         end_calls = [call for call in mock_schedule.call_args_list if call.args == ("end",)]
         assert len(end_calls) == 1
 
@@ -474,8 +482,10 @@ async def test_spam_live_tracker_sends_end_command_when_db_start_fails(test_db):
         await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
         assert mock_schedule.call_args_list[0].args == ("start",)
 
-        tracker._sync_active_state(base + 40)
-        await tracker._end_episode(base + 40)
+        state = _cat(tracker)
+        tracker._sync_active_state(state, base + 40)
+        await tracker._end_episode(state, base + 40)
+        tracker._sync_repeater_automation()
         assert mock_schedule.call_args_list[-1].args == ("end",)
 
 
@@ -526,9 +536,10 @@ async def test_spam_live_tracker_force_finalize_sends_end_when_start_dispatched(
         await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
         assert mock_schedule.call_args_list[0].args == ("start",)
 
-        tracker._episode_open = False
-        tracker._repeater_automation_armed = False
-        await tracker._end_episode(base + 40, force=True)
+        state = _cat(tracker)
+        state.episode_open = False
+        await tracker._end_episode(state, base + 40, force=True)
+        tracker._sync_repeater_automation()
         assert mock_schedule.call_args_list[-1].args == ("end",)
 
 
@@ -554,10 +565,11 @@ async def test_spam_live_tracker_discards_episode_row_when_flood_ends_before_db_
             side_effect=slow_create_started,
         ),
     ):
-        tracker._open_flood_episode(base)
-        start_task = asyncio.create_task(tracker._start_episode(base))
+        tracker._open_flood_episode(_cat(tracker), base)
+        start_task = asyncio.create_task(tracker._start_episode(_cat(tracker), base))
         await asyncio.sleep(0)
-        tracker._episode_open = False
+        state = _cat(tracker)
+        state.episode_open = False
         start_barrier.set()
         await start_task
 
@@ -604,16 +616,53 @@ async def test_spam_live_tracker_watchdog_ends_episode_without_new_packets(test_
     ):
         await tracker.observe_and_maybe_alert(path_hex="AABB", path_len=2, observed_at=base)
         await tracker.observe_and_maybe_alert(path_hex="AACC", path_len=2, observed_at=base + 1)
-        assert tracker._episode_open is True
+        state = _cat(tracker)
+        assert state.episode_open is True
         assert mock_schedule.call_args_list[0].args == ("start",)
 
-        tracker._history.clear()
-        tracker._hold_until = base + 2
+        state.history.clear()
+        state.hold_until = base + 2
         with patch("app.services.spam_live_tracker.time.time", return_value=base + 10):
-            await tracker._maybe_finalize_expired_episode()
+            await tracker._maybe_finalize_expired_episodes()
 
-        assert tracker._episode_open is False
+        assert state.episode_open is False
         assert mock_schedule.call_args_list[-1].args == ("end",)
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_tracks_dm_and_request_floods_separately(test_db):
+    tracker = _make_tracker(packet_threshold=3, hold_secs=30, gateway_pubkeys=frozenset())
+    base = _test_base()
+    with patch(
+        "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+        new_callable=AsyncMock,
+        return_value=1.0,
+    ):
+        for offset in range(3):
+            await tracker.observe_and_maybe_alert(
+                category="dm",
+                path_hex="AABB",
+                path_len=2,
+                observed_at=base + offset,
+            )
+        for offset in range(3):
+            await tracker.observe_and_maybe_alert(
+                category="request",
+                path_hex="CCDD",
+                path_len=2,
+                observed_at=base + 10 + offset,
+            )
+
+    status = await tracker.get_live_status()
+    assert status.active is True
+    active = {item.category: item for item in status.category_floods if item.active}
+    assert "dm" in active
+    assert "request" in active
+    assert active["dm"].total_packets == 3
+    assert active["request"].total_packets == 3
+    assert len(active["dm"].clusters) >= 1
+    assert active["dm"].clusters[0].entry_hop == "AA"
+    assert active["request"].clusters[0].entry_hop == "CC"
 
 
 @pytest.mark.asyncio
@@ -623,7 +672,7 @@ async def test_spam_live_tracker_longest_route_tokens_use_max_hop_path():
     await tracker.observe_and_maybe_alert(path_hex="AA11", path_len=2, observed_at=base)
     await tracker.observe_and_maybe_alert(path_hex="AA1122BB", path_len=4, observed_at=base + 1)
 
-    clusters = tracker._cluster_packets()
+    clusters = tracker._cluster_packets(_cat(tracker))
     assert len(clusters) == 1
     assert clusters[0]["longest_path_tokens"] == ["AA", "11", "22", "BB"]
 
@@ -670,14 +719,15 @@ async def test_spam_live_tracker_holds_alarm_after_threshold_drops():
             observed_at=base + offset,
         )
 
-    tracker._sync_active_state(base + 35)
-    assert tracker._active is True
-    assert tracker._trigger_window_count(base + 35) == 0
-    assert len(tracker._history) == 3
+    state = _cat(tracker)
+    tracker._sync_active_state(state, base + 35)
+    assert state.active is True
+    assert tracker._trigger_window_count(state, base + 35) == 0
+    assert len(state.history) == 3
 
-    tracker._sync_active_state(base + 302)
-    assert tracker._active is False
-    assert len(tracker._history) == 0
+    tracker._sync_active_state(state, base + 302)
+    assert state.active is False
+    assert len(state.history) == 0
 
 
 @pytest.mark.asyncio
@@ -692,8 +742,9 @@ async def test_spam_live_status_exposes_episode_packet_counts():
             observed_at=base + offset,
         )
 
-    tracker._sync_active_state(base + 35)
-    status = await tracker._build_status_async(base + 35, tracker._cluster_packets())
+    state = _cat(tracker)
+    tracker._sync_active_state(state, base + 35)
+    status = await tracker._build_aggregate_status_async(base + 35)
     assert status.active is True
     assert status.total_packets == 0
     assert status.episode_packets == 3
@@ -722,13 +773,14 @@ async def test_spam_live_tracker_discards_fluke_episode_from_history(test_db):
                 path_len=2,
                 observed_at=base + offset,
             )
-        assert tracker._episode_db_id is not None
-        episode_id = tracker._episode_db_id
+        state = _cat(tracker)
+        assert state.episode_db_id is not None
+        episode_id = state.episode_db_id
 
-        tracker._sync_active_state(base + 40)
-        await tracker._end_episode(base + 40)
+        tracker._sync_active_state(state, base + 40)
+        await tracker._end_episode(state, base + 40)
 
-    assert tracker._episode_db_id is None
+    assert _cat(tracker).episode_db_id is None
     episodes = await SpamFloodEpisodeRepository.list_recent()
     assert all(episode.id != episode_id for episode in episodes)
 
@@ -754,11 +806,13 @@ async def test_spam_live_tracker_keeps_episode_when_packet_cap_reached(test_db):
                 path_len=2,
                 observed_at=base + offset,
             )
-        episode_id = tracker._episode_db_id
+        episode_id = _cat(tracker).episode_db_id
         assert episode_id is not None
 
-        tracker._sync_active_state(base + 40)
-        await tracker._end_episode(base + 40)
+        state = _cat(tracker)
+        tracker._sync_active_state(state, base + 40)
+        await tracker._end_episode(state, base + 40)
+        tracker._sync_repeater_automation()
 
     episodes = await SpamFloodEpisodeRepository.list_recent()
     kept = next((episode for episode in episodes if episode.id == episode_id), None)

@@ -649,6 +649,43 @@ class SpamFloodCluster(BaseModel):
     )
 
 
+class SpamCategoryFloodStatus(BaseModel):
+    """Live flood status for one packet category (dm, request, group_text, etc.)."""
+
+    category: str
+    category_label: str
+    active: bool = False
+    window_secs: int = 30
+    packet_threshold: int = 15
+    total_packets: int = 0
+    episode_packets: int = 0
+    episode_window_secs: int = 0
+    detected_at: int | None = None
+    baseline_packets_per_window: float | None = None
+    anomaly_ratio: float | None = None
+    episode_id: int | None = None
+    cluster_min_share: float = 0.15
+    clusters_stale: bool = False
+    primary_category: str | None = None
+    category_counts: dict[str, int] = Field(default_factory=dict)
+    category_labels: dict[str, str] = Field(default_factory=dict)
+    likely_source_key: str | None = None
+    likely_source_label: str | None = None
+    likely_source_name: str | None = None
+    likely_source_public_key: str | None = None
+    likely_source_lat: float | None = None
+    likely_source_lon: float | None = None
+    likely_source_geo_hint: str | None = None
+    likely_source_traffic_share: float | None = None
+    likely_source_packet_count: int | None = None
+    likely_source_kind: str | None = None
+    source_filter_active: bool = False
+    source_filter_mode: str | None = None
+    source_filter_excluded_packets: int = 0
+    source_filter_labels: list[str] = Field(default_factory=list)
+    clusters: list[SpamFloodCluster] = Field(default_factory=list)
+
+
 class SpamLiveStatus(BaseModel):
     """Live rolling-window flood detection status."""
 
@@ -751,6 +788,10 @@ class SpamLiveStatus(BaseModel):
         description="Short sender labels included in the active filter (for example F0)",
     )
     clusters: list[SpamFloodCluster] = Field(default_factory=list)
+    category_floods: list[SpamCategoryFloodStatus] = Field(
+        default_factory=list,
+        description="Per-packet-category flood windows; active entries drive clustering",
+    )
 
 
 class SpamFloodEpisode(BaseModel):

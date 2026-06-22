@@ -3,6 +3,7 @@ import { AlertTriangle, Crosshair, ExternalLink, MapPin, RadioTower, RefreshCw, 
 
 import { api } from '../api';
 import type {
+  SpamCategoryFloodStatus,
   SpamFloodCluster,
   SpamFloodEpisode,
   SpamLiveStatus,
@@ -13,10 +14,7 @@ import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { SpamPacketTimelineSection } from './SpamPacketTimelineSection';
 import { cn } from '@/lib/utils';
-import {
-  formatSpamCategoryBreakdown,
-  spamCategoryLabel,
-} from '../utils/spamPacketCategories';
+import { formatSpamCategoryBreakdown } from '../utils/spamPacketCategories';
 import {
   formatEpisodeLocationSummary as formatEpisodeLocSummary,
   resolveEpisodeLocationCoords,
@@ -237,14 +235,6 @@ function formatEpisodeFloodType(episode: SpamFloodEpisode): string {
     episode.category_counts,
     episode.category_labels,
     episode.total_packets,
-  );
-}
-
-function formatLiveFloodType(live: SpamLiveStatus): string {
-  return formatSpamCategoryBreakdown(
-    live.category_counts,
-    live.category_labels,
-    live.episode_packets || live.total_packets,
   );
 }
 
@@ -734,24 +724,49 @@ function LiveFloodSection({ live }: { live: SpamLiveStatus | null }) {
     );
   }
 
+  const categoryFloods = live.category_floods ?? [];
+  const activeFloods = categoryFloods.filter((item) => item.active);
+
   if (!live.active) {
     return (
-      <section className="rounded-md border border-border bg-muted/10 px-3 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-semibold">Live Flood Monitor</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Watching the last {live.window_secs}s for {live.packet_threshold}+ packet observations.
-            </p>
-          </div>
-          <div className="rounded bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-            {live.total_packets} / {live.packet_threshold} packets
-          </div>
+      <section className="rounded-md border border-border bg-muted/10 px-3 py-3 space-y-2">
+        <div>
+          <h3 className="text-sm font-semibold">Live Flood Monitor</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Each packet type is tracked separately in the last {live.window_secs}s window (
+            {live.packet_threshold}+ packets to trigger).
+          </p>
         </div>
+        {categoryFloods.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {categoryFloods.map((item) => (
+              <div
+                key={item.category}
+                className="rounded bg-muted px-2 py-1 text-xs font-medium text-muted-foreground"
+              >
+                {item.category_label}: {item.total_packets} / {item.packet_threshold}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+            0 / {live.packet_threshold} packets
+          </div>
+        )}
       </section>
     );
   }
 
+  return (
+    <div className="space-y-3">
+      {activeFloods.map((flood) => (
+        <LiveCategoryFloodCard key={flood.category} flood={flood} />
+      ))}
+    </div>
+  );
+}
+
+function LiveCategoryFloodCard({ flood }: { flood: SpamCategoryFloodStatus }) {
   return (
     <section className="space-y-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -759,22 +774,20 @@ function LiveFloodSection({ live }: { live: SpamLiveStatus | null }) {
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" aria-hidden="true" />
           <div>
             <h3 className="text-sm font-semibold text-destructive">
-              {spamCategoryLabel(live.primary_category, live.category_labels)} Flood Detected
+              {flood.category_label} Flood Detected
             </h3>
             <p className="mt-1 text-xs text-destructive/90">
-              {formatLiveFloodType(live)}
+              {flood.episode_packets > 0
+                ? `${flood.episode_packets} packets in episode`
+                : `${flood.total_packets} packets`}
               {' · '}
-              {live.episode_packets > 0
-                ? `${live.episode_packets} packets in episode`
-                : `${live.total_packets} packets`}
-              {' · '}
-              {live.total_packets} in last {live.window_secs}s
-              {live.baseline_packets_per_window != null
-                ? ` · baseline ${live.baseline_packets_per_window.toFixed(1)}/${live.window_secs}s`
+              {flood.total_packets} {flood.category_label.toLowerCase()} pkts in last {flood.window_secs}s
+              {flood.baseline_packets_per_window != null
+                ? ` · baseline ${flood.baseline_packets_per_window.toFixed(1)}/${flood.window_secs}s`
                 : ''}
-              {live.anomaly_ratio != null ? ` · ${live.anomaly_ratio.toFixed(1)}x normal` : ''}
-              {live.detected_at != null ? ` · since ${formatSeen(live.detected_at)}` : ''}
-              {live.total_packets < live.packet_threshold ? ' · hold active' : ''}
+              {flood.anomaly_ratio != null ? ` · ${flood.anomaly_ratio.toFixed(1)}x normal` : ''}
+              {flood.detected_at != null ? ` · since ${formatSeen(flood.detected_at)}` : ''}
+              {flood.total_packets < flood.packet_threshold ? ' · hold active' : ''}
             </p>
           </div>
         </div>
@@ -783,60 +796,41 @@ function LiveFloodSection({ live }: { live: SpamLiveStatus | null }) {
         </div>
       </div>
 
-      <LikelySourceBanner source={live} />
+      <LikelySourceBanner source={flood} />
 
-      {live.source_filter_active && live.source_filter_labels && live.source_filter_labels.length > 0 && (
+      {flood.source_filter_active && flood.source_filter_labels && flood.source_filter_labels.length > 0 && (
         <p className="text-xs text-destructive/90">
           Path clustering scoped to sender{' '}
-          {live.source_filter_mode === 'multi' ? 'identities' : 'identity'}{' '}
-          {live.source_filter_labels.join(' + ')}
-          {live.source_filter_excluded_packets != null && live.source_filter_excluded_packets > 0
-            ? ` (${live.source_filter_excluded_packets} side-traffic paths excluded)`
+          {flood.source_filter_mode === 'multi' ? 'identities' : 'identity'}{' '}
+          {flood.source_filter_labels.join(' + ')}
+          {flood.source_filter_excluded_packets != null && flood.source_filter_excluded_packets > 0
+            ? ` (${flood.source_filter_excluded_packets} side-traffic paths excluded)`
             : ''}
           .
         </p>
       )}
-      {live.source_filter_mode === 'rotating' && (
+      {flood.source_filter_mode === 'rotating' && (
         <p className="text-xs text-destructive/90">
           Sender hash is cycling across many identities — path clustering uses all RF paths instead
           of filtering to one from byte.
         </p>
       )}
 
-      {live.clusters.length === 0 ? (
+      {flood.clusters.length === 0 ? (
         <p className="text-xs text-destructive/90">
           Flood volume is high, but no ingress hop reached the minimum share yet (
-          {formatPercent(live.cluster_min_share ?? 0.15)} of episode paths must share a prefix).
-          This usually means the attack is spraying many different routes rather than one concentrated
-          ingress trunk.
+          {formatPercent(flood.cluster_min_share ?? 0.15)} of episode paths must share a prefix).
         </p>
       ) : (
         <div className="space-y-2">
-          {live.clusters_stale && (
+          {flood.clusters_stale && (
             <p className="text-xs text-destructive/90">
               Showing peak hotspot snapshot while current paths are too dispersed for a fresh match.
-              Traffic shares stay at each candidate&apos;s episode high-water mark until the hold
-              window closes.
             </p>
           )}
-          {live.clusters.some((cluster) => cluster.cluster_mode === 'entry_fallback') && (
-            <p className="text-xs text-destructive/90">
-              Split-ingress candidates mean traffic is divided across several entry hops, each below
-              the {formatPercent(live.cluster_min_share ?? 0.15)} shared-prefix bar on its own.
-              Confidence stays low (often near 30%) because the score penalizes shallow, low-share
-              grouping — compare traffic share and packet count instead.
-            </p>
-          )}
-          {live.clusters.some((cluster) => cluster.cluster_mode === 'partitioned') &&
-            !live.clusters.some((cluster) => cluster.cluster_mode === 'entry_fallback') && (
-              <p className="text-xs text-destructive/90">
-                Multiple ingress sources detected. Each hotspot was narrowed inside its own entry hop
-                because no single prefix dominated the whole episode.
-              </p>
-            )}
           <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3 max-h-[32rem] overflow-y-auto pr-1">
-            {live.clusters.map((cluster, index) => (
-              <LiveHotspotCard key={`${cluster.entry_hop}-${index}`} cluster={cluster} index={index} />
+            {flood.clusters.map((cluster, index) => (
+              <LiveHotspotCard key={`${flood.category}-${cluster.entry_hop}-${index}`} cluster={cluster} index={index} />
             ))}
           </div>
         </div>

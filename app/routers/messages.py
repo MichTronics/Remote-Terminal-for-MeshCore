@@ -69,15 +69,8 @@ async def get_spam_flood_episodes(
 async def delete_spam_flood_episode(episode_id: int) -> dict[str, str]:
     """Delete a persisted flood episode report."""
     deleted = await SpamFloodEpisodeRepository.delete(episode_id)
-    if deleted and spam_live_tracker._episode_db_id == episode_id:
-        spam_live_tracker._episode_db_id = None
-        spam_live_tracker._episode_total_packets = 0
-        spam_live_tracker._episode_peak_window = 0
-        spam_live_tracker._episode_baseline = None
-        spam_live_tracker._episode_started_at = None
-        spam_live_tracker._episode_last_clusters = []
-        spam_live_tracker._episode_packet_records = []
-        spam_live_tracker._episode_peak_clusters = {}
+    if deleted:
+        spam_live_tracker.clear_episode_if_deleted(episode_id)
     return {"status": "ok"}
 
 

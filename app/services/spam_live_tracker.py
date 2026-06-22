@@ -9,7 +9,7 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.models import SpamFloodCluster, SpamLiveStatus
+from app.models import SpamCategoryFloodStatus, SpamFloodCluster, SpamLiveStatus
 from app.path_utils import (
     hash_mode_from_hop_token,
     hop_allows_prefix_name_lookup,
@@ -22,6 +22,7 @@ from app.repository.spam_flood_episodes import SpamFloodEpisodeRepository
 from app.services.spam_advert_neighbors import enrich_hop_geos_from_advert_neighbors
 from app.services.spam_baseline import SpamBaselineService
 from app.services.spam_detection_settings import is_fluke_episode
+from app.services.spam_category_flood_state import CategoryFloodState
 from app.services.spam_flood_repeater_automation import schedule_spam_flood_repeater_commands
 from app.services.spam_gateway_filter import (
     gateway_pubkeys_from_configured,
@@ -85,28 +86,12 @@ class SpamLiveTracker:
     fluke_max_packets: int = 35
     fluke_max_duration_secs: int = 300
 
-    _history: deque[_PacketRecord] = field(default_factory=deque, init=False)
+    _category_states: dict[str, CategoryFloodState] = field(default_factory=dict, init=False)
     _gateway_pubkeys: frozenset[str] = field(
         default_factory=lambda: gateway_pubkeys_from_configured(""),
         init=False,
     )
-    _active: bool = field(default=False, init=False)
-    _detected_at: float | None = field(default=None, init=False)
-    _hold_until: float | None = field(default=None, init=False)
-    _last_broadcast_at: float = field(default=0.0, init=False)
     _last_status: SpamLiveStatus | None = field(default=None, init=False)
-    _episode_db_id: int | None = field(default=None, init=False)
-    _episode_total_packets: int = field(default=0, init=False)
-    _episode_peak_window: int = field(default=0, init=False)
-    _episode_baseline: float | None = field(default=None, init=False)
-    _episode_started_at: int | None = field(default=None, init=False)
-    _episode_last_clusters: list[SpamFloodCluster] = field(default_factory=list, init=False)
-    _episode_packet_records: list[_PacketRecord] = field(default_factory=list, init=False)
-    _episode_peak_clusters: dict[str, SpamFloodCluster] = field(default_factory=dict, init=False)
-    _episode_likely_source: dict[str, Any] | None = field(default=None, init=False)
-    _episode_source_filter: SourceFilterPlan | None = field(default=None, init=False)
-    _episode_open: bool = field(default=False, init=False)
-    _repeater_automation_armed: bool = field(default=False, init=False)
     _repeater_start_dispatched: bool = field(default=False, init=False)
     _episode_watchdog_task: asyncio.Task[None] | None = field(default=None, init=False)
     _episode_lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
@@ -117,6 +102,29 @@ class SpamLiveTracker:
 
     def reload_gateway_pubkeys(self) -> None:
         self._gateway_pubkeys = gateway_pubkeys_from_configured(self.spam_gateway_keys)
+
+    def _category_state(self, category: str) -> CategoryFloodState:
+        state = self._category_states.get(category)
+        if state is None:
+            state = CategoryFloodState(category=category)
+            self._category_states[category] = state
+        return state
+
+    def _any_category_active(self) -> bool:
+        return any(state.active for state in self._category_states.values())
+
+    def _any_episode_open(self) -> bool:
+        return any(state.episode_open for state in self._category_states.values())
+
+    def _sync_repeater_automation(self) -> None:
+        """Send repeater start once when any category flood is open; end when all are done."""
+        if self._any_episode_open():
+            if not self._repeater_start_dispatched:
+                schedule_spam_flood_repeater_commands("start")
+                self._repeater_start_dispatched = True
+        elif self._repeater_start_dispatched:
+            schedule_spam_flood_repeater_commands("end")
+            self._repeater_start_dispatched = False
 
     def apply_runtime_settings(
         self,
@@ -211,19 +219,20 @@ class SpamLiveTracker:
             source_key=source_key,
             source_label=source_label,
         )
-        self._history.append(record)
+        state = self._category_state(category)
+        state.history.append(record)
 
-        was_active = self._active
-        self._sync_active_state(current_time)
-        if self._active:
+        was_active = state.active
+        self._sync_active_state(state, current_time)
+        if state.active:
             if not was_active:
                 cutoff = current_time - self.window_secs
-                self._episode_packet_records = [
-                    existing for existing in self._history if existing.timestamp >= cutoff
+                state.episode_packet_records = [
+                    existing for existing in state.history if existing.timestamp >= cutoff
                 ]
             else:
-                self._episode_packet_records.append(record)
-        return self._should_broadcast(current_time, was_active)
+                state.episode_packet_records.append(record)
+        return self._should_broadcast(state, current_time, was_active)
 
     def observe_dm_path(
         self,
@@ -247,52 +256,56 @@ class SpamLiveTracker:
             return configured
         return max(self.hold_secs, self.window_secs)
 
-    def _retention_cutoff(self, current_time: float) -> float:
-        if self._detected_at is not None:
+    def _retention_cutoff(self, state: CategoryFloodState, current_time: float) -> float:
+        if state.detected_at is not None:
             horizon = self._episode_retention_horizon()
-            # Keep the full trigger window that led to detection, plus the episode horizon.
-            episode_floor = self._detected_at - self.window_secs
+            episode_floor = state.detected_at - self.window_secs
             episode_horizon = current_time - horizon
             return min(episode_floor, episode_horizon)
         return current_time - self.window_secs
 
-    def _trim_window(self, current_time: float) -> None:
-        cutoff = self._retention_cutoff(current_time)
-        while self._history and self._history[0].timestamp < cutoff:
-            self._history.popleft()
+    def _trim_window(self, state: CategoryFloodState, current_time: float) -> None:
+        cutoff = self._retention_cutoff(state, current_time)
+        while state.history and state.history[0].timestamp < cutoff:
+            state.history.popleft()
 
-    def _trigger_window_count(self, current_time: float) -> int:
+    def _trigger_window_count(self, state: CategoryFloodState, current_time: float) -> int:
         cutoff = current_time - self.window_secs
-        return sum(1 for record in self._history if record.timestamp >= cutoff)
+        return sum(1 for record in state.history if record.timestamp >= cutoff)
 
-    def _sync_active_state(self, current_time: float) -> None:
-        """Apply retention trim and threshold/hold logic."""
-        above_threshold = self._trigger_window_count(current_time) >= self.packet_threshold
+    def _sync_active_state(self, state: CategoryFloodState, current_time: float) -> None:
+        """Apply retention trim and threshold/hold logic for one packet category."""
+        above_threshold = self._trigger_window_count(state, current_time) >= self.packet_threshold
         if above_threshold:
-            if self._detected_at is None:
-                self._detected_at = current_time
+            if state.detected_at is None:
+                state.detected_at = current_time
             if self.hold_secs > 0:
-                self._hold_until = current_time + self.hold_secs
+                state.hold_until = current_time + self.hold_secs
 
         in_hold = (
             self.hold_secs > 0
-            and self._hold_until is not None
-            and current_time < self._hold_until
+            and state.hold_until is not None
+            and current_time < state.hold_until
         )
-        self._active = above_threshold or in_hold
-        self._trim_window(current_time)
+        state.active = above_threshold or in_hold
+        self._trim_window(state, current_time)
 
-        if not self._active:
-            self._detected_at = None
-            self._hold_until = None
-            self._trim_window(current_time)
+        if not state.active:
+            state.detected_at = None
+            state.hold_until = None
+            self._trim_window(state, current_time)
 
-    def _should_broadcast(self, current_time: float, was_active: bool) -> bool:
-        if not self._active:
+    def _should_broadcast(
+        self,
+        state: CategoryFloodState,
+        current_time: float,
+        was_active: bool,
+    ) -> bool:
+        if not state.active:
             return was_active
         return (
             not was_active
-            or current_time - self._last_broadcast_at >= self.broadcast_cooldown_secs
+            or current_time - state.last_broadcast_at >= self.broadcast_cooldown_secs
         )
 
     def _min_cluster_size(self) -> int:
@@ -315,14 +328,18 @@ class SpamLiveTracker:
         suffix = "/".join(refined) if refined else cluster.entry_hop
         return f"{cluster.entry_hop}:{suffix}"
 
-    def _update_episode_peak_clusters(self, clusters: list[SpamFloodCluster]) -> None:
+    def _update_episode_peak_clusters(
+        self,
+        state: CategoryFloodState,
+        clusters: list[SpamFloodCluster],
+    ) -> None:
         for cluster in clusters:
             key = self._cluster_identity_key(cluster)
-            existing = self._episode_peak_clusters.get(key)
+            existing = state.episode_peak_clusters.get(key)
             if existing is None:
-                self._episode_peak_clusters[key] = cluster
+                state.episode_peak_clusters[key] = cluster
                 continue
-            self._episode_peak_clusters[key] = existing.model_copy(
+            state.episode_peak_clusters[key] = existing.model_copy(
                 update={
                     "packet_count": max(existing.packet_count, cluster.packet_count),
                     "traffic_share": max(existing.traffic_share, cluster.traffic_share),
@@ -357,12 +374,12 @@ class SpamLiveTracker:
                 }
             )
 
-    def _episode_peak_clusters_display(self) -> list[SpamFloodCluster]:
-        clusters = self._sorted_peak_clusters()
+    def _episode_peak_clusters_display(self, state: CategoryFloodState) -> list[SpamFloodCluster]:
+        clusters = self._sorted_peak_clusters(state)
         return self._apply_report_limit_models(clusters)
 
-    def _sorted_peak_clusters(self) -> list[SpamFloodCluster]:
-        clusters = list(self._episode_peak_clusters.values())
+    def _sorted_peak_clusters(self, state: CategoryFloodState) -> list[SpamFloodCluster]:
+        clusters = list(state.episode_peak_clusters.values())
         clusters.sort(
             key=lambda cluster: (
                 -cluster.packet_count,
@@ -373,12 +390,16 @@ class SpamLiveTracker:
         )
         return clusters
 
-    def _episode_records(self) -> list[_PacketRecord]:
-        if self._episode_packet_records:
-            return list(self._episode_packet_records)
-        return list(self._history)
+    def _episode_records(self, state: CategoryFloodState) -> list[_PacketRecord]:
+        if state.episode_packet_records:
+            return list(state.episode_packet_records)
+        return list(state.history)
 
-    def _source_filter_plan(self, records: list[_PacketRecord]) -> SourceFilterPlan:
+    def _source_filter_plan(
+        self,
+        state: CategoryFloodState,
+        records: list[_PacketRecord],
+    ) -> SourceFilterPlan:
         plan = build_source_filter_plan(
             [record.source_key for record in records],
             min_share=DEFAULT_LIKELY_SOURCE_MIN_SHARE,
@@ -413,10 +434,10 @@ class SpamLiveTracker:
             return [record for record in with_path if record.source_key in allowed]
         return with_path
 
-    def _clustering_records(self) -> list[_PacketRecord]:
-        records = self._episode_records()
-        plan = self._source_filter_plan(records)
-        self._episode_source_filter = plan
+    def _clustering_records(self, state: CategoryFloodState) -> list[_PacketRecord]:
+        records = self._episode_records(state)
+        plan = self._source_filter_plan(state, records)
+        state.episode_source_filter = plan
         return self._records_for_source_filter(records, plan)
 
     @staticmethod
@@ -497,8 +518,8 @@ class SpamLiveTracker:
         )
         return self._build_cluster_results(partitioned_clusters, cluster_mode="partitioned")
 
-    def _cluster_packets_narrowed(self) -> list[dict[str, Any]]:
-        return self._cluster_packets_narrowed_from(self._clustering_records())
+    def _cluster_packets_narrowed(self, state: CategoryFloodState) -> list[dict[str, Any]]:
+        return self._cluster_packets_narrowed_from(self._clustering_records(state))
 
     def _fallback_entry_clusters_from(self, records: list[_PacketRecord]) -> list[dict[str, Any]]:
         """Best-effort ingress hops when traffic is high but too dispersed to narrow."""
@@ -542,8 +563,8 @@ class SpamLiveTracker:
             )
         return results
 
-    def _fallback_entry_clusters(self) -> list[dict[str, Any]]:
-        return self._fallback_entry_clusters_from(self._clustering_records())
+    def _fallback_entry_clusters(self, state: CategoryFloodState) -> list[dict[str, Any]]:
+        return self._fallback_entry_clusters_from(self._clustering_records(state))
 
     def _cluster_packets_from(self, records: list[_PacketRecord]) -> list[dict[str, Any]]:
         narrowed = self._cluster_packets_narrowed_from(records)
@@ -554,10 +575,10 @@ class SpamLiveTracker:
             return partitioned
         return self._fallback_entry_clusters_from(records)
 
-    def _cluster_packets(self) -> list[dict[str, Any]]:
-        records = self._episode_records()
-        plan = self._source_filter_plan(records)
-        self._episode_source_filter = plan
+    def _cluster_packets(self, state: CategoryFloodState) -> list[dict[str, Any]]:
+        records = self._episode_records(state)
+        plan = self._source_filter_plan(state, records)
+        state.episode_source_filter = plan
 
         if plan.mode == "multi":
             clusters: list[dict[str, Any]] = []
@@ -586,13 +607,20 @@ class SpamLiveTracker:
     async def get_live_status(self) -> SpamLiveStatus:
         current_time = time.time()
         async with self._episode_lifecycle_lock:
-            was_active = self._active
-            self._sync_active_state(current_time)
-            await self._apply_episode_lifecycle_transitions(current_time, was_active=was_active)
-        clusters = self._cluster_packets() if self._active and self._clustering_records() else []
-        status = await self._build_status_async(current_time, clusters)
-        self._last_status = status
-        return status
+            for state in list(self._category_states.values()):
+                was_active = state.active
+                self._sync_active_state(state, current_time)
+                await self._apply_category_lifecycle_transitions(
+                    state,
+                    current_time,
+                    was_active=was_active,
+                )
+            self._sync_repeater_automation()
+            if not self._any_episode_open():
+                self._cancel_episode_watchdog()
+            if not self._any_episode_open() and not self._any_category_active():
+                await self._close_stale_open_episode_rows(current_time)
+        return await self._build_aggregate_status_async(current_time)
 
     async def _apply_one_byte_geo_resolution(
         self,
@@ -765,9 +793,9 @@ class SpamLiveTracker:
     def _focus_geo_clusters(self, clusters: list[SpamFloodCluster]) -> list[SpamFloodCluster]:
         return consolidate_geo_hotspots(clusters, max_clusters=self._max_report_clusters())
 
-    def _category_source_records(self) -> list[_PacketRecord]:
-        records = self._episode_records()
-        plan = self._episode_source_filter or self._source_filter_plan(records)
+    def _category_source_records(self, state: CategoryFloodState) -> list[_PacketRecord]:
+        records = self._episode_records(state)
+        plan = state.episode_source_filter or self._source_filter_plan(state, records)
         if plan.mode in {"single", "multi"}:
             return self._records_for_source_filter(records, plan)
         return records
@@ -778,11 +806,14 @@ class SpamLiveTracker:
     def _category_labels_for(self, counts: dict[str, int]) -> dict[str, str]:
         return {key: CATEGORY_LABELS.get(key, key) for key in counts.keys()}
 
-    def _episode_category_state(self) -> tuple[str | None, dict[str, int], dict[str, str]]:
-        records = self._category_source_records()
+    def _episode_category_state(
+        self,
+        state: CategoryFloodState,
+    ) -> tuple[str | None, dict[str, int], dict[str, str]]:
+        records = self._category_source_records(state)
         counts = self._category_breakdown(records)
         labels = self._category_labels_for(counts)
-        primary = primary_category_from_counts(counts)
+        primary = primary_category_from_counts(counts) or state.category
         return primary, counts, labels
 
     def _likely_source_min_count(self) -> int:
@@ -903,11 +934,15 @@ class SpamLiveTracker:
             "likely_source_kind": candidate.kind,
         }
 
-    async def _refresh_likely_source(self, clusters: list[SpamFloodCluster]) -> dict[str, Any]:
-        records = self._category_source_records()
+    async def _refresh_likely_source(
+        self,
+        state: CategoryFloodState,
+        clusters: list[SpamFloodCluster],
+    ) -> dict[str, Any]:
+        records = self._category_source_records(state)
         candidate = self._detect_likely_source_candidate(records)
         if candidate is None:
-            self._episode_likely_source = None
+            state.episode_likely_source = None
             return self._empty_likely_source_fields()
 
         centroid = geo_weighted_centroid(clusters)
@@ -929,7 +964,7 @@ class SpamLiveTracker:
             ref_lat=ref_lat,
             ref_lon=ref_lon,
         )
-        self._episode_likely_source = resolved
+        state.episode_likely_source = resolved
         return resolved
 
     @staticmethod
@@ -947,8 +982,8 @@ class SpamLiveTracker:
             "likely_source_kind": None,
         }
 
-    def _source_filter_fields(self) -> dict[str, Any]:
-        plan = self._episode_source_filter
+    def _source_filter_fields(self, state: CategoryFloodState) -> dict[str, Any]:
+        plan = state.episode_source_filter
         if plan is None or plan.mode in {"none", "rotating"}:
             return {
                 "source_filter_active": False,
@@ -963,68 +998,154 @@ class SpamLiveTracker:
             "source_filter_labels": [source.source_label for source in plan.sources],
         }
 
-    def _likely_source_fields(self) -> dict[str, Any]:
-        if self._episode_likely_source:
-            return dict(self._episode_likely_source)
+    def _likely_source_fields(self, state: CategoryFloodState) -> dict[str, Any]:
+        if state.episode_likely_source:
+            return dict(state.episode_likely_source)
         return self._empty_likely_source_fields()
 
-    async def _build_status_async(
-        self, current_time: float, clusters: list[dict[str, Any]]
-    ) -> SpamLiveStatus:
+    async def _build_category_status_async(
+        self,
+        state: CategoryFloodState,
+        current_time: float,
+        clusters: list[dict[str, Any]],
+    ) -> SpamCategoryFloodStatus:
         enriched_clusters = self._focus_geo_clusters(await self._enrich_clusters(clusters))
         clusters_stale = False
         if enriched_clusters:
-            self._update_episode_peak_clusters(enriched_clusters)
-            self._episode_last_clusters = list(enriched_clusters)
-            enriched_clusters = self._episode_peak_clusters_display()
-        elif self._active and self._episode_peak_clusters:
-            enriched_clusters = self._episode_peak_clusters_display()
+            self._update_episode_peak_clusters(state, enriched_clusters)
+            state.episode_last_clusters = list(enriched_clusters)
+            enriched_clusters = self._episode_peak_clusters_display(state)
+        elif state.active and state.episode_peak_clusters:
+            enriched_clusters = self._episode_peak_clusters_display(state)
             clusters_stale = True
-        elif self._active and self._episode_last_clusters:
+        elif state.active and state.episode_last_clusters:
             enriched_clusters = [
                 cluster.model_copy(update={"cluster_mode": cluster.cluster_mode or "sticky"})
-                for cluster in self._episode_last_clusters
+                for cluster in state.episode_last_clusters
             ]
             clusters_stale = True
-        peak_window = self._trigger_window_count(current_time)
-        if self._episode_db_id is not None:
-            self._episode_peak_window = max(self._episode_peak_window, peak_window)
+        peak_window = self._trigger_window_count(state, current_time)
+        if state.episode_db_id is not None:
+            state.episode_peak_window = max(state.episode_peak_window, peak_window)
 
         anomaly_ratio = None
-        if self._episode_baseline and self._episode_baseline > 0:
+        if state.episode_baseline and state.episode_baseline > 0:
             anomaly_ratio = round(
-                max(self._episode_peak_window, peak_window) / self._episode_baseline,
+                max(state.episode_peak_window, peak_window) / state.episode_baseline,
                 2,
             )
 
-        primary_category, category_counts, category_labels = self._episode_category_state()
-        if self._active:
-            likely_source = await self._refresh_likely_source(enriched_clusters)
+        primary_category, category_counts, category_labels = self._episode_category_state(state)
+        if state.active:
+            likely_source = await self._refresh_likely_source(state, enriched_clusters)
         else:
             likely_source = self._empty_likely_source_fields()
 
-        return SpamLiveStatus(
-            active=self._active,
+        return SpamCategoryFloodStatus(
+            category=state.category,
+            category_label=CATEGORY_LABELS.get(state.category, state.category),
+            active=state.active,
             window_secs=int(self.window_secs),
             packet_threshold=self.packet_threshold,
             total_packets=peak_window,
-            episode_packets=len(self._episode_packet_records) or len(self._history),
+            episode_packets=len(state.episode_packet_records) or len(state.history),
             episode_window_secs=int(self._episode_retention_horizon()),
-            detected_at=int(self._detected_at) if self._detected_at is not None else None,
+            detected_at=int(state.detected_at) if state.detected_at is not None else None,
             baseline_packets_per_window=(
-                round(self._episode_baseline, 2) if self._episode_baseline is not None else None
+                round(state.episode_baseline, 2) if state.episode_baseline is not None else None
             ),
             anomaly_ratio=anomaly_ratio,
-            episode_id=self._episode_db_id,
+            episode_id=state.episode_db_id,
             cluster_min_share=self.cluster_min_ratio,
             clusters_stale=clusters_stale,
             primary_category=primary_category,
             category_counts=category_counts,
             category_labels=category_labels,
-            **self._source_filter_fields(),
+            **self._source_filter_fields(state),
             **likely_source,
             clusters=enriched_clusters,
         )
+
+    async def _build_aggregate_status_async(self, current_time: float) -> SpamLiveStatus:
+        category_statuses: list[SpamCategoryFloodStatus] = []
+        for state in self._category_states.values():
+            if not state.history:
+                continue
+            clusters = (
+                self._cluster_packets(state)
+                if state.active and self._clustering_records(state)
+                else []
+            )
+            category_statuses.append(
+                await self._build_category_status_async(state, current_time, clusters)
+            )
+
+        category_statuses.sort(
+            key=lambda item: (
+                -int(item.active),
+                -item.total_packets,
+                -item.episode_packets,
+                item.category,
+            )
+        )
+        active_statuses = [status for status in category_statuses if status.active]
+        primary = active_statuses[0] if active_statuses else (
+            category_statuses[0] if category_statuses else None
+        )
+
+        if primary is None:
+            status = SpamLiveStatus(
+                active=False,
+                window_secs=int(self.window_secs),
+                packet_threshold=self.packet_threshold,
+                total_packets=0,
+                episode_packets=0,
+                episode_window_secs=int(self._episode_retention_horizon()),
+                cluster_min_share=self.cluster_min_ratio,
+                category_floods=[],
+            )
+        else:
+            status = SpamLiveStatus(
+                active=bool(active_statuses),
+                window_secs=primary.window_secs,
+                packet_threshold=primary.packet_threshold,
+                total_packets=primary.total_packets,
+                episode_packets=primary.episode_packets,
+                episode_window_secs=primary.episode_window_secs,
+                detected_at=primary.detected_at,
+                baseline_packets_per_window=primary.baseline_packets_per_window,
+                anomaly_ratio=primary.anomaly_ratio,
+                episode_id=primary.episode_id,
+                cluster_min_share=primary.cluster_min_share,
+                clusters_stale=primary.clusters_stale,
+                primary_category=primary.primary_category,
+                category_counts=primary.category_counts,
+                category_labels=primary.category_labels,
+                likely_source_key=primary.likely_source_key,
+                likely_source_label=primary.likely_source_label,
+                likely_source_name=primary.likely_source_name,
+                likely_source_public_key=primary.likely_source_public_key,
+                likely_source_lat=primary.likely_source_lat,
+                likely_source_lon=primary.likely_source_lon,
+                likely_source_geo_hint=primary.likely_source_geo_hint,
+                likely_source_traffic_share=primary.likely_source_traffic_share,
+                likely_source_packet_count=primary.likely_source_packet_count,
+                likely_source_kind=primary.likely_source_kind,
+                source_filter_active=primary.source_filter_active,
+                source_filter_mode=primary.source_filter_mode,
+                source_filter_excluded_packets=primary.source_filter_excluded_packets,
+                source_filter_labels=primary.source_filter_labels,
+                clusters=primary.clusters,
+                category_floods=category_statuses,
+            )
+        self._last_status = status
+        return status
+
+    async def _build_status_async(
+        self, current_time: float, clusters: list[dict[str, Any]]
+    ) -> SpamLiveStatus:
+        """Backward-compatible alias used by watchdog broadcast paths."""
+        return await self._build_aggregate_status_async(current_time)
 
     @staticmethod
     async def _lookup_prefix_geos(hop_tokens: list[str]) -> dict[str, dict[str, Any]]:
@@ -1050,12 +1171,13 @@ class SpamLiveTracker:
             }
         return geos
 
-    async def _start_episode(self, current_time: float) -> None:
-        started_at = int(self._detected_at or current_time)
+    async def _start_episode(self, state: CategoryFloodState, current_time: float) -> None:
+        started_at = int(state.detected_at or current_time)
         try:
             baseline = await SpamBaselineService.get_packets_per_window(
                 window_secs=int(self.window_secs),
                 until=started_at,
+                category=state.category,
             )
             episode_id = await SpamFloodEpisodeRepository.create_started(
                 started_at=started_at,
@@ -1064,41 +1186,40 @@ class SpamLiveTracker:
                 window_secs=int(self.window_secs),
             )
         except Exception:
-            logger.exception("Failed to start spam flood episode log")
+            logger.exception("Failed to start spam flood episode log for %s", state.category)
             return
 
-        if not self._episode_open:
+        if not state.episode_open:
             try:
                 deleted = await SpamFloodEpisodeRepository.delete(episode_id)
                 if deleted:
                     logger.info(
-                        "Discarded stale spam flood episode %s created after flood ended",
+                        "Discarded stale %s spam flood episode %s created after flood ended",
+                        state.category,
                         episode_id,
                     )
             except Exception:
                 logger.exception("Failed to discard stale spam flood episode %s", episode_id)
             return
 
-        self._episode_db_id = episode_id
-        self._episode_baseline = baseline
-        self._episode_peak_window = self._trigger_window_count(current_time)
-        self._episode_last_clusters = []
-        if not self._episode_packet_records:
-            self._episode_packet_records = []
-        self._episode_peak_clusters = {}
+        state.episode_db_id = episode_id
+        state.episode_baseline = baseline
+        state.episode_peak_window = self._trigger_window_count(state, current_time)
+        state.episode_last_clusters = []
+        if not state.episode_packet_records:
+            state.episode_packet_records = []
+        state.episode_peak_clusters = {}
 
-    def _open_flood_episode(self, current_time: float) -> None:
-        """Arm repeater automation and begin episode tracking once per flood."""
-        if self._episode_open:
+    def _open_flood_episode(self, state: CategoryFloodState, current_time: float) -> None:
+        """Begin per-category episode tracking once per flood."""
+        if state.episode_open:
             return
-        self._episode_open = True
-        self._repeater_automation_armed = True
-        self._episode_started_at = int(self._detected_at or current_time)
-        self._episode_total_packets = len(self._episode_packet_records) or self._trigger_window_count(
-            current_time
+        state.episode_open = True
+        state.episode_started_at = int(state.detected_at or current_time)
+        state.episode_total_packets = len(state.episode_packet_records) or self._trigger_window_count(
+            state,
+            current_time,
         )
-        schedule_spam_flood_repeater_commands("start")
-        self._repeater_start_dispatched = True
         self._ensure_episode_watchdog()
 
     def _cancel_episode_watchdog(self) -> None:
@@ -1114,57 +1235,65 @@ class SpamLiveTracker:
         self._episode_watchdog_task = asyncio.create_task(self._run_episode_watchdog())
 
     async def _run_episode_watchdog(self) -> None:
-        """End flood episodes when the hold window expires even if no new DMs arrive."""
+        """End flood episodes when hold windows expire even if no new packets arrive."""
         try:
-            while self._episode_open:
+            while self._any_episode_open():
                 await asyncio.sleep(2.0)
-                if not self._episode_open:
+                if not self._any_episode_open():
                     return
-                await self._maybe_finalize_expired_episode()
+                await self._maybe_finalize_expired_episodes()
         except asyncio.CancelledError:
             return
 
-    async def _maybe_finalize_expired_episode(self) -> None:
+    async def _maybe_finalize_expired_episodes(self) -> None:
         current_time = time.time()
+        should_broadcast = False
         async with self._episode_lifecycle_lock:
-            was_active = self._active
-            self._sync_active_state(current_time)
-            if not (was_active and not self._active):
-                return
-            await self._apply_episode_lifecycle_transitions(current_time, was_active=was_active)
+            for state in list(self._category_states.values()):
+                was_active = state.active
+                self._sync_active_state(state, current_time)
+                if was_active and not state.active:
+                    should_broadcast = True
+                await self._apply_category_lifecycle_transitions(
+                    state,
+                    current_time,
+                    was_active=was_active,
+                )
+            self._sync_repeater_automation()
+            if not self._any_episode_open():
+                self._cancel_episode_watchdog()
+        if not should_broadcast:
+            return
         from app.websocket import broadcast_event
 
-        status = await self._build_status_async(current_time, clusters=[])
-        self._last_status = status
-        self._last_broadcast_at = 0.0
+        status = await self._build_aggregate_status_async(current_time)
         broadcast_event("spam_flood_alert", status.model_dump())
 
-    async def _apply_episode_lifecycle_transitions(
+    async def _apply_category_lifecycle_transitions(
         self,
+        state: CategoryFloodState,
         current_time: float,
         *,
         was_active: bool,
     ) -> None:
-        """Open, progress, or end the flood episode. Caller must hold _episode_lifecycle_lock."""
-        if self._active:
-            if not self._episode_open:
-                self._open_flood_episode(current_time)
-                await self._start_episode(current_time)
+        """Open, progress, or end one category flood episode. Caller must hold lock."""
+        if state.active:
+            if not state.episode_open:
+                self._open_flood_episode(state, current_time)
+                await self._start_episode(state, current_time)
             else:
-                self._episode_peak_window = max(
-                    self._episode_peak_window,
-                    self._trigger_window_count(current_time),
+                state.episode_peak_window = max(
+                    state.episode_peak_window,
+                    self._trigger_window_count(state, current_time),
                 )
-            self._episode_total_packets = len(self._episode_packet_records)
-            if self._episode_db_id is not None:
-                self._schedule_episode_progress()
+            state.episode_total_packets = len(state.episode_packet_records)
+            if state.episode_db_id is not None:
+                self._schedule_episode_progress(state)
 
-        if was_active and not self._active:
-            await self._end_episode(current_time)
-        elif not self._active and self._episode_db_id is not None:
-            await self._end_episode(current_time, force=True)
-        elif not self._active and not self._episode_open:
-            await self._close_stale_open_episode_rows(current_time)
+        if was_active and not state.active:
+            await self._end_episode(state, current_time)
+        elif not state.active and state.episode_db_id is not None:
+            await self._end_episode(state, current_time, force=True)
 
     async def _close_stale_open_episode_rows(self, current_time: float) -> None:
         """Close DB rows left open when in-memory episode state was lost."""
@@ -1177,83 +1306,72 @@ class SpamLiveTracker:
         except Exception:
             logger.exception("Failed to close stale in-progress spam flood episodes")
 
-    def _reset_episode_state(self, *, skip_watchdog_cancel: bool = False) -> None:
-        if not skip_watchdog_cancel:
-            self._cancel_episode_watchdog()
-        self._episode_open = False
-        self._repeater_automation_armed = False
-        self._repeater_start_dispatched = False
-        self._episode_db_id = None
-        self._episode_total_packets = 0
-        self._episode_peak_window = 0
-        self._episode_baseline = None
-        self._episode_started_at = None
-        self._episode_last_clusters = []
-        self._episode_packet_records = []
-        self._episode_peak_clusters = {}
-        self._episode_likely_source = None
-        self._episode_source_filter = None
+    def _reset_episode_state(self, state: CategoryFloodState) -> None:
+        state.reset_episode()
 
-    def _schedule_episode_progress(self) -> None:
-        if self._episode_db_id is None:
+    def _schedule_episode_progress(self, state: CategoryFloodState) -> None:
+        if state.episode_db_id is None:
             return
-        asyncio.create_task(self._persist_episode_progress())
+        asyncio.create_task(self._persist_episode_progress(state))
 
-    async def _persist_episode_progress(self) -> None:
-        if self._episode_db_id is None:
+    async def _persist_episode_progress(self, state: CategoryFloodState) -> None:
+        if state.episode_db_id is None:
             return
-        cluster_raw = self._cluster_packets()
+        cluster_raw = self._cluster_packets(state)
         if cluster_raw:
             enriched = self._focus_geo_clusters(await self._enrich_clusters(cluster_raw))
-            self._update_episode_peak_clusters(enriched)
-            self._episode_last_clusters = self._episode_peak_clusters_display()
-            await self._refresh_likely_source(self._episode_last_clusters)
-        _, category_counts, _ = self._episode_category_state()
-        likely_source = self._likely_source_fields()
+            self._update_episode_peak_clusters(state, enriched)
+            state.episode_last_clusters = self._episode_peak_clusters_display(state)
+            await self._refresh_likely_source(state, state.episode_last_clusters)
+        _, category_counts, _ = self._episode_category_state(state)
+        likely_source = self._likely_source_fields(state)
         try:
             await SpamFloodEpisodeRepository.update_progress(
-                episode_id=self._episode_db_id,
-                total_packets=self._episode_total_packets,
-                peak_packets_per_window=self._episode_peak_window,
-                clusters=self._episode_last_clusters,
+                episode_id=state.episode_db_id,
+                total_packets=state.episode_total_packets,
+                peak_packets_per_window=state.episode_peak_window,
+                clusters=state.episode_last_clusters,
                 category_counts=category_counts,
                 likely_source=likely_source,
             )
         except Exception:
-            logger.exception("Failed to update spam flood episode %s", self._episode_db_id)
+            logger.exception("Failed to update spam flood episode %s", state.episode_db_id)
 
-    async def _end_episode(self, current_time: float, *, force: bool = False) -> None:
-        if not self._episode_open:
-            if not force or self._episode_db_id is None:
+    async def _end_episode(
+        self,
+        state: CategoryFloodState,
+        current_time: float,
+        *,
+        force: bool = False,
+    ) -> None:
+        if not state.episode_open:
+            if not force or state.episode_db_id is None:
                 return
-            should_send_end = self._repeater_start_dispatched
+            state.episode_open = False
         else:
-            should_send_end = self._repeater_automation_armed
-            self._episode_open = False
-            self._repeater_automation_armed = False
-            self._cancel_episode_watchdog()
+            state.episode_open = False
 
-        episode_id = self._episode_db_id
-        started_at = self._episode_started_at or int(current_time)
+        episode_id = state.episode_db_id
+        started_at = state.episode_started_at or int(current_time)
         ended_at = int(current_time)
         duration_secs = max(0, ended_at - started_at)
-        total_packets = self._episode_total_packets
-        cluster_raw = self._cluster_packets()
+        total_packets = state.episode_total_packets
+        cluster_raw = self._cluster_packets(state)
         if cluster_raw:
             final_clusters = self._focus_geo_clusters(await self._enrich_clusters(cluster_raw))
-            self._update_episode_peak_clusters(final_clusters)
-            final_clusters = self._episode_peak_clusters_display()
-        elif self._episode_peak_clusters:
-            final_clusters = self._episode_peak_clusters_display()
-        elif self._episode_last_clusters:
-            final_clusters = self._apply_report_limit_models(self._episode_last_clusters)
+            self._update_episode_peak_clusters(state, final_clusters)
+            final_clusters = self._episode_peak_clusters_display(state)
+        elif state.episode_peak_clusters:
+            final_clusters = self._episode_peak_clusters_display(state)
+        elif state.episode_last_clusters:
+            final_clusters = self._apply_report_limit_models(state.episode_last_clusters)
         else:
             final_clusters = []
 
-        primary_category, category_counts, category_labels = self._episode_category_state()
-        likely_source = self._likely_source_fields()
+        primary_category, category_counts, category_labels = self._episode_category_state(state)
+        likely_source = self._likely_source_fields(state)
         if likely_source.get("likely_source_key") is None and final_clusters:
-            likely_source = await self._refresh_likely_source(final_clusters)
+            likely_source = await self._refresh_likely_source(state, final_clusters)
 
         try:
             if episode_id is not None:
@@ -1266,7 +1384,8 @@ class SpamLiveTracker:
                     deleted = await SpamFloodEpisodeRepository.delete(episode_id)
                     if deleted:
                         logger.info(
-                            "Discarded fluke spam flood episode %s (%d packets in %ds)",
+                            "Discarded fluke %s spam flood episode %s (%d packets in %ds)",
+                            state.category,
                             episode_id,
                             total_packets,
                             duration_secs,
@@ -1277,8 +1396,8 @@ class SpamLiveTracker:
                         started_at=started_at,
                         ended_at=ended_at,
                         total_packets=total_packets,
-                        peak_packets_per_window=self._episode_peak_window,
-                        baseline_packets_per_window=self._episode_baseline,
+                        peak_packets_per_window=state.episode_peak_window,
+                        baseline_packets_per_window=state.episode_baseline,
                         clusters=final_clusters,
                         category_counts=category_counts,
                         likely_source=likely_source,
@@ -1286,10 +1405,12 @@ class SpamLiveTracker:
         except Exception:
             logger.exception("Failed to finalize spam flood episode %s", episode_id)
         finally:
-            if should_send_end:
-                schedule_spam_flood_repeater_commands("end")
-            self._repeater_start_dispatched = False
-            self._reset_episode_state(skip_watchdog_cancel=True)
+            self._reset_episode_state(state)
+
+    def clear_episode_if_deleted(self, episode_id: int) -> None:
+        for state in self._category_states.values():
+            if state.episode_db_id == episode_id:
+                state.reset_episode()
 
     async def observe_and_maybe_alert(
         self,
@@ -1304,8 +1425,9 @@ class SpamLiveTracker:
     ) -> SpamLiveStatus | None:
         """Observe a packet and return enriched status when an alert should fire."""
         current_time = float(observed_at if observed_at is not None else time.time())
+        state = self._category_state(category)
         async with self._episode_lifecycle_lock:
-            was_active = self._active
+            was_active = state.active
             should_broadcast = self.observe_packet(
                 category=category,
                 path_hex=path_hex,
@@ -1315,23 +1437,26 @@ class SpamLiveTracker:
                 source_key=source_key,
                 source_label=source_label,
             )
-            await self._apply_episode_lifecycle_transitions(current_time, was_active=was_active)
-            ended_transition = was_active and not self._active
+            await self._apply_category_lifecycle_transitions(
+                state,
+                current_time,
+                was_active=was_active,
+            )
+            self._sync_repeater_automation()
+            ended_transition = was_active and not state.active
 
         if not should_broadcast and not ended_transition:
             return None
 
-        if not self._active:
-            status = await self._build_status_async(current_time, clusters=[])
-            self._last_status = status
-            self._last_broadcast_at = 0.0
-            return status
+        if state.active:
+            state.last_broadcast_at = current_time
 
-        self._last_broadcast_at = current_time
-        clusters = self._cluster_packets()
-        status = await self._build_status_async(current_time, clusters)
-        self._last_status = status
-        self._schedule_episode_progress()
+        status = await self._build_aggregate_status_async(current_time)
+        if not status.active:
+            for cat_state in self._category_states.values():
+                cat_state.last_broadcast_at = 0.0
+        if state.active:
+            self._schedule_episode_progress(state)
         return status
 
 

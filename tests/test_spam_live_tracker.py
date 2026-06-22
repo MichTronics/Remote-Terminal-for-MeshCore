@@ -480,6 +480,58 @@ async def test_spam_live_tracker_sends_end_command_when_db_start_fails(test_db):
 
 
 @pytest.mark.asyncio
+async def test_spam_live_tracker_discards_episode_row_when_flood_ends_before_db_start(test_db):
+    """Regression: a slow create_started must not leave ended_at=NULL rows behind."""
+    tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())
+    base = _test_base()
+    start_barrier = asyncio.Event()
+
+    async def slow_create_started(**kwargs):
+        await start_barrier.wait()
+        return await SpamFloodEpisodeRepository.create_started(**kwargs)
+
+    with (
+        patch(
+            "app.services.spam_live_tracker.SpamBaselineService.get_packets_per_window",
+            new_callable=AsyncMock,
+            return_value=1.0,
+        ),
+        patch(
+            "app.services.spam_live_tracker.SpamFloodEpisodeRepository.create_started",
+            side_effect=slow_create_started,
+        ),
+    ):
+        tracker._open_flood_episode(base)
+        start_task = asyncio.create_task(tracker._start_episode(base))
+        await asyncio.sleep(0)
+        tracker._episode_open = False
+        start_barrier.set()
+        await start_task
+
+    episodes = await SpamFloodEpisodeRepository.list_recent(limit=10)
+    assert episodes == []
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_get_live_status_closes_stale_open_rows(test_db):
+    tracker = _make_tracker(packet_threshold=2, hold_secs=30, gateway_pubkeys=frozenset())
+    episode_id = await SpamFloodEpisodeRepository.create_started(
+        started_at=int(_test_base()),
+        baseline_packets_per_window=1.0,
+        packet_threshold=2,
+        window_secs=30,
+    )
+
+    status = await tracker.get_live_status()
+
+    assert status.active is False
+    episodes = await SpamFloodEpisodeRepository.list_recent(limit=10)
+    assert len(episodes) == 1
+    assert episodes[0].id == episode_id
+    assert episodes[0].ended_at is not None
+
+
+@pytest.mark.asyncio
 async def test_spam_live_tracker_watchdog_ends_episode_without_new_packets(test_db):
     tracker = _make_tracker(packet_threshold=2, hold_secs=5, gateway_pubkeys=frozenset())
     base = _test_base()

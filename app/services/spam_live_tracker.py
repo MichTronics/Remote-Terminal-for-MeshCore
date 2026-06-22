@@ -108,6 +108,7 @@ class SpamLiveTracker:
     _episode_open: bool = field(default=False, init=False)
     _repeater_automation_armed: bool = field(default=False, init=False)
     _episode_watchdog_task: asyncio.Task[None] | None = field(default=None, init=False)
+    _episode_lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     @property
     def gateway_pubkeys(self) -> frozenset[str]:
@@ -585,8 +586,7 @@ class SpamLiveTracker:
         current_time = time.time()
         was_active = self._active
         self._sync_active_state(current_time)
-        if was_active and not self._active:
-            await self._end_episode(current_time)
+        await self._sync_episode_lifecycle(current_time, was_active=was_active)
         clusters = self._cluster_packets() if self._active and self._clustering_records() else []
         status = await self._build_status_async(current_time, clusters)
         self._last_status = status
@@ -1065,6 +1065,18 @@ class SpamLiveTracker:
             logger.exception("Failed to start spam flood episode log")
             return
 
+        if not self._episode_open:
+            try:
+                deleted = await SpamFloodEpisodeRepository.delete(episode_id)
+                if deleted:
+                    logger.info(
+                        "Discarded stale spam flood episode %s created after flood ended",
+                        episode_id,
+                    )
+            except Exception:
+                logger.exception("Failed to discard stale spam flood episode %s", episode_id)
+            return
+
         self._episode_db_id = episode_id
         self._episode_baseline = baseline
         self._episode_peak_window = self._trigger_window_count(current_time)
@@ -1116,13 +1128,47 @@ class SpamLiveTracker:
         if not (was_active and not self._active):
             return
 
-        await self._end_episode(current_time)
+        await self._sync_episode_lifecycle(current_time, was_active=was_active)
         from app.websocket import broadcast_event
 
         status = await self._build_status_async(current_time, clusters=[])
         self._last_status = status
         self._last_broadcast_at = 0.0
         broadcast_event("spam_flood_alert", status.model_dump())
+
+    async def _sync_episode_lifecycle(self, current_time: float, *, was_active: bool) -> None:
+        """Serialize episode open/progress/end so DB rows cannot outlive live state."""
+        async with self._episode_lifecycle_lock:
+            if self._active:
+                if not self._episode_open:
+                    self._open_flood_episode(current_time)
+                    await self._start_episode(current_time)
+                else:
+                    self._episode_peak_window = max(
+                        self._episode_peak_window,
+                        self._trigger_window_count(current_time),
+                    )
+                self._episode_total_packets = len(self._episode_packet_records)
+                if self._episode_db_id is not None:
+                    self._schedule_episode_progress()
+
+            if was_active and not self._active:
+                await self._end_episode(current_time)
+            elif not self._active and self._episode_db_id is not None:
+                await self._end_episode(current_time, force=True)
+            elif not self._active and not self._episode_open:
+                await self._close_stale_open_episode_rows(current_time)
+
+    async def _close_stale_open_episode_rows(self, current_time: float) -> None:
+        """Close DB rows left open when in-memory episode state was lost."""
+        try:
+            closed = await SpamFloodEpisodeRepository.close_open_episodes(
+                ended_at=int(current_time),
+            )
+            if closed:
+                logger.info("Closed %d stale in-progress spam flood episode(s)", closed)
+        except Exception:
+            logger.exception("Failed to close stale in-progress spam flood episodes")
 
     def _reset_episode_state(self, *, skip_watchdog_cancel: bool = False) -> None:
         if not skip_watchdog_cancel:
@@ -1168,14 +1214,16 @@ class SpamLiveTracker:
         except Exception:
             logger.exception("Failed to update spam flood episode %s", self._episode_db_id)
 
-    async def _end_episode(self, current_time: float) -> None:
+    async def _end_episode(self, current_time: float, *, force: bool = False) -> None:
         if not self._episode_open:
-            return
-
-        should_send_end = self._repeater_automation_armed
-        self._episode_open = False
-        self._repeater_automation_armed = False
-        self._cancel_episode_watchdog()
+            if not force or self._episode_db_id is None:
+                return
+            should_send_end = False
+        else:
+            should_send_end = self._repeater_automation_armed
+            self._episode_open = False
+            self._repeater_automation_armed = False
+            self._cancel_episode_watchdog()
 
         episode_id = self._episode_db_id
         started_at = self._episode_started_at or int(current_time)
@@ -1258,21 +1306,7 @@ class SpamLiveTracker:
             source_label=source_label,
         )
 
-        if self._active:
-            if not self._episode_open:
-                self._open_flood_episode(current_time)
-                await self._start_episode(current_time)
-            else:
-                self._episode_peak_window = max(
-                    self._episode_peak_window,
-                    self._trigger_window_count(current_time),
-                )
-            self._episode_total_packets = len(self._episode_packet_records)
-            if self._episode_db_id is not None:
-                self._schedule_episode_progress()
-
-        if was_active and not self._active:
-            await self._end_episode(current_time)
+        await self._sync_episode_lifecycle(current_time, was_active=was_active)
 
         if not should_broadcast and not (was_active and not self._active):
             return None

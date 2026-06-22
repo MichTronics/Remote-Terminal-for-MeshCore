@@ -126,6 +126,14 @@ class ContactAdvertNeighborRepository:
         return [ContactRepository._row_to_contact(row) for row in rows]
 
     @staticmethod
+    async def count_stored() -> int:
+        """Return the number of stored advert first-hop neighbor rows."""
+        async with database.db.readonly() as conn:
+            async with conn.execute("SELECT COUNT(*) AS cnt FROM contact_advert_neighbors") as cursor:
+                row = await cursor.fetchone()
+        return int(row["cnt"]) if row else 0
+
+    @staticmethod
     async def prune_stale(*, now: int | None = None) -> int:
         """Remove neighbor rows older than the retention window."""
         import time

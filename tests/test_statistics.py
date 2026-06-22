@@ -18,6 +18,7 @@ class TestStatisticsEmpty:
         assert result["contact_count"] == 0
         assert result["repeater_count"] == 0
         assert result["channel_count"] == 1  # #remoteterm seed from migration 33
+        assert result["advert_neighbor_count"] == 0
         assert result["total_packets"] == 0
         assert result["decrypted_packets"] == 0
         assert result["undecrypted_packets"] == 0
@@ -75,6 +76,36 @@ class TestStatisticsCounts:
 
         assert result["contact_count"] == 2
         assert result["repeater_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_advert_neighbor_count(self, test_db):
+        now = int(time.time())
+        conn = test_db.conn
+        contact_key = "aa" * 32
+        await conn.execute(
+            "INSERT INTO contacts (public_key, type, last_seen) VALUES (?, ?, ?)",
+            (contact_key, 1, now),
+        )
+        await conn.execute(
+            """
+            INSERT INTO contact_advert_neighbors
+                (public_key, neighbor_hop, path_hash_mode, first_seen, last_seen, heard_count)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (contact_key, "0F", 0, now, now, 1),
+        )
+        await conn.execute(
+            """
+            INSERT INTO contact_advert_neighbors
+                (public_key, neighbor_hop, path_hash_mode, first_seen, last_seen, heard_count)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (contact_key, "11", 0, now, now, 2),
+        )
+        await conn.commit()
+
+        result = await StatisticsRepository.get_all()
+        assert result["advert_neighbor_count"] == 2
 
     @pytest.mark.asyncio
     async def test_channel_count(self, test_db):

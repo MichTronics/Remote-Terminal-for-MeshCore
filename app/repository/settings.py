@@ -8,6 +8,7 @@ import aiosqlite
 from app.database import db
 from app.models import AppSettings
 from app.path_utils import bucket_path_hash_widths
+from app.repository.contact_advert_neighbors import ContactAdvertNeighborRepository
 from app.telemetry_interval import DEFAULT_TELEMETRY_INTERVAL_HOURS
 
 logger = logging.getLogger(__name__)
@@ -824,12 +825,14 @@ class StatisticsRepository:
         path_hash_width_24h = await StatisticsRepository._path_hash_width_24h()
         primary_regions_24h = await StatisticsRepository._primary_regions_24h()
         packets_per_hour_72h = await StatisticsRepository._packets_per_hour_72h()
+        advert_neighbor_count = await ContactAdvertNeighborRepository.count_stored()
 
         return {
             "busiest_channels_24h": busiest_channels_24h,
             "contact_count": contact_count,
             "repeater_count": repeater_count,
             "channel_count": channel_count,
+            "advert_neighbor_count": advert_neighbor_count,
             "total_packets": total_packets,
             "decrypted_packets": decrypted_packets,
             "undecrypted_packets": undecrypted_packets,

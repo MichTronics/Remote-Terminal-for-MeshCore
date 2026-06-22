@@ -882,6 +882,7 @@ export interface StatisticsResponse {
   contact_count: number;
   repeater_count: number;
   channel_count: number;
+  advert_neighbor_count: number;
   total_packets: number;
   decrypted_packets: number;
   undecrypted_packets: number;

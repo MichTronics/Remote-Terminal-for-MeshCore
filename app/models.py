@@ -1400,6 +1400,9 @@ class StatisticsResponse(BaseModel):
     contact_count: int
     repeater_count: int
     channel_count: int
+    advert_neighbor_count: int = Field(
+        description="Stored advert first-hop neighbor rows used for triangulation hints"
+    )
     total_packets: int
     decrypted_packets: int
     undecrypted_packets: int

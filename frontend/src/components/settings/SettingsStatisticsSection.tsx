@@ -227,7 +227,7 @@ export function SettingsStatisticsSection({ className }: { className?: string })
           {/* Network */}
           <div>
             <h3 className="text-base font-semibold tracking-tight mb-2">Network</h3>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="text-center p-3 bg-muted/50 rounded-md">
                 <div className="text-2xl font-bold">{stats.contact_count}</div>
                 <div className="text-xs text-muted-foreground">Contacts</div>
@@ -239,6 +239,10 @@ export function SettingsStatisticsSection({ className }: { className?: string })
               <div className="text-center p-3 bg-muted/50 rounded-md">
                 <div className="text-2xl font-bold">{stats.channel_count}</div>
                 <div className="text-xs text-muted-foreground">Channels</div>
+              </div>
+              <div className="text-center p-3 bg-muted/50 rounded-md">
+                <div className="text-2xl font-bold">{stats.advert_neighbor_count}</div>
+                <div className="text-xs text-muted-foreground">Advert neighbors</div>
               </div>
             </div>
           </div>

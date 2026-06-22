@@ -691,6 +691,7 @@ describe('SettingsModal', () => {
       contact_count: 10,
       repeater_count: 3,
       channel_count: 5,
+      advert_neighbor_count: 12,
       total_packets: 200,
       decrypted_packets: 150,
       undecrypted_packets: 50,
@@ -745,6 +746,7 @@ describe('SettingsModal', () => {
     // Verify key labels are present
     expect(screen.getByText('Contacts')).toBeInTheDocument();
     expect(screen.getByText('Repeaters')).toBeInTheDocument();
+    expect(screen.getByText('Advert neighbors')).toBeInTheDocument();
     expect(screen.getByText('Direct Messages')).toBeInTheDocument();
     expect(screen.getByText('Channel Messages')).toBeInTheDocument();
     expect(screen.getByText('Sent (Outgoing)')).toBeInTheDocument();
@@ -768,6 +770,7 @@ describe('SettingsModal', () => {
       contact_count: 10,
       repeater_count: 3,
       channel_count: 5,
+      advert_neighbor_count: 12,
       total_packets: 200,
       decrypted_packets: 150,
       undecrypted_packets: 50,

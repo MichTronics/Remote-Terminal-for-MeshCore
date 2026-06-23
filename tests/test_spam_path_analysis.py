@@ -244,10 +244,20 @@ def test_rank_block_candidates_tracks_multiple_ingress_hops():
         for item in ranked
         if item.hop_tokens == ("64", "B5")
     }
-    assert {"B5", "A0", "CC"}.issubset(set(by_last_hop))
+    assert {"A0", "CC"}.issubset(set(by_last_hop))
     if "DD" in by_last_hop:
         assert by_last_hop["DD"].route_label == "64 ⇢ B5 (⇢ DD)"
     assert format_block_segment_label(("64", "B5"), last_hop="DB") == "64 ⇢ B5 (⇢ DB)"
+
+
+def test_rank_block_candidates_ignores_local_ingress_in_segment_mining():
+    """Local repeater (last hop) is ingress only; segments come from earlier hops."""
+    path = ("77", "16", "6D", "85", "E6", "DB")
+    paths = [path] * 6 + [("XX", "YY", "ZZ")]
+    ranked, _combined = rank_block_candidates(paths, min_paths=5, min_packets=2, min_share=0.5)
+    top = next(item for item in ranked if item.last_hop == "DB")
+    assert top.hop_tokens == ("85", "E6")
+    assert top.route_label == "85 ⇢ E6 (⇢ DB)"
 
 
 def test_rank_block_candidates_uses_dominant_path_last_hop_in_label():

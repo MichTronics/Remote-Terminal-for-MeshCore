@@ -600,7 +600,7 @@ class SpamBlockCandidate(BaseModel):
     )
     last_hop: str | None = Field(
         default=None,
-        description="Dominant final path hop (local ingress repeater) for paths carrying this segment",
+        description="Local ingress repeater: final hop in the observed path (radio-side)",
     )
     last_hop_name: str | None = Field(
         default=None,

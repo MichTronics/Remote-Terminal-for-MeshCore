@@ -350,8 +350,22 @@ def count_segment_occurrences(path: tuple[str, ...], segment: tuple[str, ...]) -
 
 
 @dataclass(frozen=True)
+class BlockPathObservation:
+    """Path hops excluding the local ingress repeater, plus that ingress token."""
+
+    hops: tuple[str, ...]
+    ingress_hop: str
+
+    @property
+    def full_path(self) -> tuple[str, ...]:
+        if not self.ingress_hop:
+            return self.hops
+        return self.hops + (self.ingress_hop,)
+
+
+@dataclass(frozen=True)
 class BlockIngressHint:
-    """Ingress hop where paths carrying a segment entered the mesh."""
+    """Mesh entry hop (path source-side) for paths carrying a segment via an ingress repeater."""
 
     hop: str
     packet_count: int
@@ -368,6 +382,7 @@ class BlockCandidateSegment:
     source_hop: str
     db_hop: str
     last_hop: str | None
+    segment_start_index: int
     packet_count: int
     occurrence_count: int
     traffic_share: float
@@ -407,8 +422,22 @@ def greedy_combined_coverage(
     return best_coverage, selected
 
 
-def rank_block_candidates(
+def block_path_observations_from_paths(
     paths: list[tuple[str, ...]],
+) -> list[BlockPathObservation]:
+    """Treat the final hop as the local ingress repeater; earlier hops are blockable path."""
+    observations: list[BlockPathObservation] = []
+    for path in paths:
+        if len(path) < 2:
+            continue
+        observations.append(
+            BlockPathObservation(hops=tuple(path[:-1]), ingress_hop=path[-1]),
+        )
+    return observations
+
+
+def rank_block_candidates(
+    paths: list[tuple[str, ...]] | list[BlockPathObservation],
     *,
     segment_lengths: tuple[int, ...] = (2, 3),
     min_paths: int = 5,
@@ -418,9 +447,20 @@ def rank_block_candidates(
 ) -> tuple[list[BlockCandidateSegment], float | None]:
     """Rank frequent 2- and 3-hop segments for repeater block rules.
 
+    Each observation uses all hops except the final token for segment mining; the
+    final token is the local ingress repeater (radio-side last hop), e.g. DB in
+    ``77 -> ... -> 85 -> E6 -> DB`` yields segment path ``77 -> ... -> 85 -> E6``
+    and ingress ``DB``.
+
     Returns ranked candidates plus greedy combined coverage for the top picks.
     """
-    filtered = [tuple(path) for path in paths if path]
+    if paths and isinstance(paths[0], BlockPathObservation):
+        observations = list(paths)  # type: ignore[arg-type]
+    else:
+        observations = block_path_observations_from_paths(
+            [tuple(path) for path in paths if path],  # type: ignore[arg-type]
+        )
+    filtered = [obs for obs in observations if obs.hops and obs.ingress_hop]
     total_paths = len(filtered)
     if total_paths < min_paths:
         return [], None
@@ -428,20 +468,23 @@ def rank_block_candidates(
     occurrence_counter: Counter[tuple[str, ...]] = Counter()
     segment_last_hop_counts: Counter[tuple[tuple[str, ...], str]] = Counter()
     ingress_by_segment_last_hop: dict[tuple[tuple[str, ...], str], Counter[str]] = {}
-    for path in filtered:
-        entry_hop = path[0]
-        path_last_hop = path[-1]
+    segment_start_index: dict[tuple[tuple[str, ...], str], int] = {}
+    for observation in filtered:
+        segment_path = observation.hops
+        ingress_hop = observation.ingress_hop
+        entry_hop = segment_path[0]
         seen_segments: set[tuple[str, ...]] = set()
         for segment_len in segment_lengths:
-            if segment_len < 2 or segment_len > len(path):
+            if segment_len < 2 or segment_len > len(segment_path):
                 continue
-            for index in range(len(path) - segment_len + 1):
-                segment = tuple(path[index : index + segment_len])
+            for index in range(len(segment_path) - segment_len + 1):
+                segment = tuple(segment_path[index : index + segment_len])
                 occurrence_counter[segment] += 1
                 if segment not in seen_segments:
-                    key = (segment, path_last_hop)
+                    key = (segment, ingress_hop)
                     segment_last_hop_counts[key] += 1
                     ingress_by_segment_last_hop.setdefault(key, Counter())[entry_hop] += 1
+                    segment_start_index[key] = max(segment_start_index.get(key, -1), index)
                     seen_segments.add(segment)
 
     candidates: list[BlockCandidateSegment] = []
@@ -464,6 +507,7 @@ def rank_block_candidates(
                 source_hop=segment[-1],
                 db_hop=segment[0],
                 last_hop=last_hop,
+                segment_start_index=segment_start_index.get((segment, last_hop), 0),
                 packet_count=packet_count,
                 occurrence_count=occurrence_count,
                 traffic_share=share,
@@ -475,7 +519,8 @@ def rank_block_candidates(
         key=lambda item: (
             item.last_hop or "",
             -item.packet_count,
-            -item.occurrence_count,
+            item.occurrence_count / max(item.packet_count, 1),
+            -item.segment_start_index,
             item.segment_len,
             item.route,
         )
@@ -491,7 +536,8 @@ def rank_block_candidates(
             continue
         ordered_segments.append(item.hop_tokens)
         seen_segments.add(item.hop_tokens)
-    combined_coverage, _ = greedy_combined_coverage(filtered, ordered_segments, max_segments=3)
+    full_paths = [obs.full_path for obs in filtered]
+    combined_coverage, _ = greedy_combined_coverage(full_paths, ordered_segments, max_segments=3)
     return ranked, combined_coverage if combined_coverage > 0 else None
 
 

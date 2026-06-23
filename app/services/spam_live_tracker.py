@@ -57,6 +57,7 @@ from app.services.spam_path_analysis import (
     nearest_named_chain_landmark,
     pick_nearest_coords_to_point,
     rank_block_candidates,
+    BlockPathObservation,
     split_entry_partitioned_clusters,
     split_path_clusters,
     SourceFilterPlan,
@@ -75,6 +76,8 @@ class _PacketRecord:
     timestamp: float
     entry_node: str
     full_rf_path: tuple[str, ...]
+    full_path: tuple[str, ...]
+    local_ingress_hop: str
     category: str
     path_hash_mode: int | None = None
     source_key: str | None = None
@@ -243,6 +246,8 @@ class SpamLiveTracker:
             path_hash_size=hash_size,
         )
         rf_only = self._strip_to_rf_path(tokens)
+        full_path = tuple(tokens)
+        local_ingress = tokens[-1] if tokens else ""
         path_hash_mode = None
         if hash_size is not None and 1 <= hash_size <= 3:
             path_hash_mode = hash_size - 1
@@ -251,6 +256,8 @@ class SpamLiveTracker:
             timestamp=current_time,
             entry_node=rf_only[0] if rf_only else "",
             full_rf_path=tuple(rf_only),
+            full_path=full_path,
+            local_ingress_hop=local_ingress,
             category=category,
             path_hash_mode=path_hash_mode,
             source_key=source_key,
@@ -1063,15 +1070,22 @@ class SpamLiveTracker:
             return state.block_candidates_cache, state.block_candidates_combined_cache
 
         records = self._clustering_records(state)
-        paths = [record.full_rf_path for record in records if record.full_rf_path]
-        if len(paths) < 5:
+        observations = [
+            BlockPathObservation(
+                hops=tuple(record.full_path[:-1]),
+                ingress_hop=record.local_ingress_hop,
+            )
+            for record in records
+            if len(record.full_path) >= 2 and record.local_ingress_hop
+        ]
+        if len(observations) < 5:
             state.block_candidates_cache = []
             state.block_candidates_combined_cache = None
             state.block_candidates_refreshed_at = current_time
             return [], None
 
         ranked, combined_coverage = rank_block_candidates(
-            paths,
+            observations,
             min_paths=5,
             min_packets=2,
             min_share=max(0.08, self.cluster_min_ratio * 0.5),

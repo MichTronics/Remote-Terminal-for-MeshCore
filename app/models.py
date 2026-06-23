@@ -584,7 +584,7 @@ class SpamBlockCandidate(BaseModel):
 
     route: str = Field(description="Segment hops in traversal order, for example '64 ⇢ B5'")
     route_label: str = Field(
-        description="Segment label with local ingress hop when known, for example '64 ⇢ B5 (Orinen ⇢ F6)'",
+        description="Segment label with local ingress hop, for example '64 ⇢ B5 (⇢ DB)'",
     )
     hop_tokens: list[str] = Field(description="Hop identifiers in traversal order")
     segment_len: int = Field(description="Number of consecutive hops in this segment (2 or 3)")

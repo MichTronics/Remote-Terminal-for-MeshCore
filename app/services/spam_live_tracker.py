@@ -1099,7 +1099,6 @@ class SpamLiveTracker:
                 route=item.route,
                 route_label=format_block_segment_label(
                     item.hop_tokens,
-                    source_name=hop_names.get(item.source_hop),
                     last_hop=item.last_hop,
                     last_hop_name=hop_names.get(item.last_hop) if item.last_hop else None,
                 ),

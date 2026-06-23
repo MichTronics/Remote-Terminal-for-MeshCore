@@ -1010,7 +1010,7 @@ async def test_spam_live_tracker_splits_dual_sender_floods(test_db):
 async def test_spam_live_tracker_exposes_block_candidates_during_flood(test_db):
     tracker = _make_tracker(packet_threshold=5, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
     base = _test_base()
-    shared_path = "77" + "AB" + "A0" + "23"
+    shared_path = "77" + "AB" + "A0" + "DB"
     other_path = "C3" + "91" + "77"
 
     for offset in range(8):
@@ -1031,11 +1031,13 @@ async def test_spam_live_tracker_exposes_block_candidates_during_flood(test_db):
     status = await tracker.get_live_status()
     flood = next(item for item in status.category_floods if item.category == "group_text")
     assert flood.block_candidates
-    top = flood.block_candidates[0]
-    assert top.hop_tokens == ["77", "AB"]
+    top = next(
+        item
+        for item in flood.block_candidates
+        if item.hop_tokens == ["77", "AB"] and item.last_hop == "DB"
+    )
     assert top.route == "77 ⇢ AB"
-    assert top.last_hop == "23"
-    assert "⇢ 23" in top.route_label
+    assert top.route_label == "77 ⇢ AB (⇢ DB)"
     assert top.source_hop == "AB"
     assert top.traffic_share >= 0.8
     assert flood.block_candidates_combined_coverage is not None

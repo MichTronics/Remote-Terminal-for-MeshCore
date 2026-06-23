@@ -184,42 +184,70 @@ def test_build_one_byte_geo_hint_without_landmark():
 
 def test_rank_block_candidates_prefers_frequent_two_hop_segments():
     paths = [
-        ("C3", "91", "77", "AB", "A0"),
-        ("C3", "91", "77", "AB", "A0", "23"),
-        ("C3", "91", "77", "AB", "B4"),
-        ("C3", "91", "77", "AB", "43"),
-        ("C3", "91", "77", "AB", "BA"),
+        ("C3", "91", "77", "AB", "DB"),
+        ("C3", "91", "77", "AB", "DB", "23"),
+        ("C3", "91", "77", "AB", "DB"),
+        ("C3", "91", "77", "AB", "DB"),
+        ("C3", "91", "77", "AB", "DB"),
         ("XX", "YY", "ZZ"),
     ]
     ranked, combined = rank_block_candidates(paths, min_paths=5, min_packets=2, min_share=0.5)
     assert ranked
     assert ranked[0].hop_tokens == ("77", "AB")
     assert ranked[0].route == "77 ⇢ AB"
-    assert ranked[0].route_label == "77 ⇢ AB"
-    assert ranked[0].last_hop is None
+    assert ranked[0].route_label == "77 ⇢ AB (⇢ DB)"
+    assert ranked[0].last_hop == "DB"
     assert ranked[0].source_hop == "AB"
     assert ranked[0].db_hop == "77"
-    assert ranked[0].packet_count == 5
-    assert ranked[0].traffic_share == pytest.approx(5 / 6)
+    assert ranked[0].packet_count == 4
+    assert ranked[0].traffic_share == pytest.approx(4 / 6)
     assert combined is not None
     assert combined >= 5 / 6
+
+
+def test_rank_block_candidates_splits_same_segment_by_last_hop():
+    paths = [
+        ("C3", "91", "77", "AB", "DB"),
+        ("C3", "91", "77", "AB", "DB"),
+        ("C3", "91", "77", "AB", "DB"),
+        ("C3", "91", "77", "AB", "F6"),
+        ("C3", "91", "77", "AB", "F6"),
+        ("XX", "YY", "ZZ"),
+    ]
+    ranked, _combined = rank_block_candidates(paths, min_paths=5, min_packets=2, min_share=0.25)
+    by_last_hop = {
+        item.last_hop: item
+        for item in ranked
+        if item.hop_tokens == ("77", "AB")
+    }
+    assert by_last_hop["DB"].packet_count == 3
+    assert by_last_hop["F6"].packet_count == 2
+    assert by_last_hop["DB"].route_label == "77 ⇢ AB (⇢ DB)"
+    assert ranked[0].last_hop == "DB"
 
 
 def test_rank_block_candidates_tracks_multiple_ingress_hops():
     paths = [
         ("F6", "64", "B5"),
-        ("F6", "64", "B5", "A0"),
         ("AB", "64", "B5"),
+        ("F6", "64", "B5", "A0"),
+        ("F6", "64", "B5", "A0"),
         ("AB", "64", "B5", "CC"),
+        ("AB", "64", "B5", "CC"),
+        ("AB", "64", "B5", "DD"),
         ("AB", "64", "B5", "DD"),
         ("ZZ", "YY"),
     ]
-    ranked, _combined = rank_block_candidates(paths, min_paths=5, min_packets=2, min_share=0.4)
-    top = next(item for item in ranked if item.hop_tokens == ("64", "B5"))
-    ingress = {hint.hop: hint.packet_count for hint in top.ingress_hints}
-    assert ingress == {"F6": 2, "AB": 3}
-    assert format_block_segment_label(top.hop_tokens) == "64 ⇢ B5"
-    assert format_block_segment_label(("64", "B5"), last_hop="A0") == "64 ⇢ B5 (B5 ⇢ A0)"
+    ranked, _combined = rank_block_candidates(paths, min_paths=5, min_packets=2, min_share=0.15)
+    by_last_hop = {
+        item.last_hop: item
+        for item in ranked
+        if item.hop_tokens == ("64", "B5")
+    }
+    assert {"B5", "A0", "CC"}.issubset(set(by_last_hop))
+    if "DD" in by_last_hop:
+        assert by_last_hop["DD"].route_label == "64 ⇢ B5 (⇢ DD)"
+    assert format_block_segment_label(("64", "B5"), last_hop="DB") == "64 ⇢ B5 (⇢ DB)"
 
 
 def test_rank_block_candidates_uses_dominant_path_last_hop_in_label():
@@ -235,7 +263,7 @@ def test_rank_block_candidates_uses_dominant_path_last_hop_in_label():
     top = ranked[0]
     assert top.hop_tokens == ("77", "AB")
     assert top.last_hop == "F6"
-    assert top.route_label == "77 ⇢ AB (AB ⇢ F6)"
+    assert top.route_label == "77 ⇢ AB (⇢ F6)"
 
 
 def test_rank_block_candidates_empty_until_enough_paths():

@@ -303,14 +303,23 @@ def format_block_segment_route(hop_tokens: list[str] | tuple[str, ...]) -> str:
     return " ⇢ ".join(hop_tokens)
 
 
+def format_block_segment_ingress_label(
+    last_hop: str,
+    *,
+    last_hop_name: str | None = None,
+) -> str:
+    """Local ingress repeater suffix, e.g. '(⇢ DB)'."""
+    label = last_hop_name or last_hop
+    return f"(⇢ {label})"
+
+
 def format_block_segment_label(
     hop_tokens: list[str] | tuple[str, ...],
     *,
-    source_name: str | None = None,
     last_hop: str | None = None,
     last_hop_name: str | None = None,
 ) -> str:
-    """Render a block segment with an optional local ingress hop (path last token)."""
+    """Render a block segment plus optional local ingress hop (path last token)."""
     if not hop_tokens:
         return "Direct"
     if len(hop_tokens) == 1:
@@ -319,12 +328,7 @@ def format_block_segment_label(
         base = format_block_segment_route(hop_tokens)
     if not last_hop:
         return base
-    source_hop = hop_tokens[-1]
-    if last_hop == source_hop:
-        return base
-    source_label = source_name or source_hop
-    ingress_label = last_hop_name or last_hop
-    return f"{base} ({source_label} ⇢ {ingress_label})"
+    return f"{base} {format_block_segment_ingress_label(last_hop, last_hop_name=last_hop_name)}"
 
 
 def path_contains_segment(path: tuple[str, ...], segment: tuple[str, ...]) -> bool:
@@ -422,8 +426,8 @@ def rank_block_candidates(
         return [], None
 
     occurrence_counter: Counter[tuple[str, ...]] = Counter()
-    ingress_by_segment: dict[tuple[str, ...], Counter[str]] = {}
-    last_hop_by_segment: dict[tuple[str, ...], Counter[str]] = {}
+    segment_last_hop_counts: Counter[tuple[tuple[str, ...], str]] = Counter()
+    ingress_by_segment_last_hop: dict[tuple[tuple[str, ...], str], Counter[str]] = {}
     for path in filtered:
         entry_hop = path[0]
         path_last_hop = path[-1]
@@ -435,39 +439,31 @@ def rank_block_candidates(
                 segment = tuple(path[index : index + segment_len])
                 occurrence_counter[segment] += 1
                 if segment not in seen_segments:
-                    ingress_by_segment.setdefault(segment, Counter())[entry_hop] += 1
-                    last_hop_by_segment.setdefault(segment, Counter())[path_last_hop] += 1
+                    key = (segment, path_last_hop)
+                    segment_last_hop_counts[key] += 1
+                    ingress_by_segment_last_hop.setdefault(key, Counter())[entry_hop] += 1
                     seen_segments.add(segment)
 
     candidates: list[BlockCandidateSegment] = []
-    for segment, occurrence_count in occurrence_counter.items():
-        ingress_counter = ingress_by_segment.get(segment, Counter())
-        packet_count = sum(ingress_counter.values())
+    for (segment, last_hop), packet_count in segment_last_hop_counts.items():
         share = packet_count / total_paths
         if packet_count < min_packets or share < min_share:
             continue
+        occurrence_count = occurrence_counter[segment]
+        ingress_counter = ingress_by_segment_last_hop.get((segment, last_hop), Counter())
         ingress_hints = tuple(
             BlockIngressHint(hop=hop, packet_count=count)
             for hop, count in ingress_counter.most_common()
         )
-        last_hop_counter = last_hop_by_segment.get(segment, Counter())
-        dominant_last_hop: str | None = None
-        if last_hop_counter:
-            hop, hop_count = last_hop_counter.most_common(1)[0]
-            if hop_count / packet_count >= 0.5:
-                dominant_last_hop = hop
         candidates.append(
             BlockCandidateSegment(
                 hop_tokens=segment,
                 segment_len=len(segment),
                 route=format_block_segment_route(segment),
-                route_label=format_block_segment_label(
-                    segment,
-                    last_hop=dominant_last_hop,
-                ),
+                route_label=format_block_segment_label(segment, last_hop=last_hop),
                 source_hop=segment[-1],
                 db_hop=segment[0],
-                last_hop=dominant_last_hop,
+                last_hop=last_hop,
                 packet_count=packet_count,
                 occurrence_count=occurrence_count,
                 traffic_share=share,
@@ -477,6 +473,7 @@ def rank_block_candidates(
 
     candidates.sort(
         key=lambda item: (
+            item.last_hop or "",
             -item.packet_count,
             -item.occurrence_count,
             item.segment_len,
@@ -487,7 +484,13 @@ def rank_block_candidates(
     if not ranked:
         return [], None
 
-    ordered_segments = [item.hop_tokens for item in ranked]
+    seen_segments: set[tuple[str, ...]] = set()
+    ordered_segments: list[tuple[str, ...]] = []
+    for item in ranked:
+        if item.hop_tokens in seen_segments:
+            continue
+        ordered_segments.append(item.hop_tokens)
+        seen_segments.add(item.hop_tokens)
     combined_coverage, _ = greedy_combined_coverage(filtered, ordered_segments, max_segments=3)
     return ranked, combined_coverage if combined_coverage > 0 else None
 

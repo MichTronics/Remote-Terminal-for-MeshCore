@@ -3,6 +3,7 @@ import { AlertTriangle, Crosshair, ExternalLink, MapPin, RadioTower, RefreshCw, 
 
 import { api } from '../api';
 import type {
+  SpamBlockCandidate,
   SpamCategoryFloodStatus,
   SpamFloodCluster,
   SpamFloodEpisode,
@@ -841,9 +842,46 @@ function LiveCategoryFloodCard({ flood }: { flood: SpamCategoryFloodStatus }) {
   );
 }
 
+function formatBlockIngressHeading(candidate: SpamBlockCandidate): string {
+  const hop = candidate.last_hop;
+  if (!hop) return 'Unknown ingress';
+  const name = candidate.last_hop_name;
+  if (name && name !== hop) {
+    return `(⇢ ${hop}) · ${name}`;
+  }
+  return `(⇢ ${hop})`;
+}
+
+function groupBlockCandidatesByLastHop(
+  candidates: SpamBlockCandidate[],
+): Array<{ lastHop: string; heading: string; items: SpamBlockCandidate[] }> {
+  const groups = new Map<string, SpamBlockCandidate[]>();
+  for (const candidate of candidates) {
+    const key = candidate.last_hop ?? 'unknown';
+    const bucket = groups.get(key);
+    if (bucket) {
+      bucket.push(candidate);
+    } else {
+      groups.set(key, [candidate]);
+    }
+  }
+  return [...groups.entries()]
+    .map(([lastHop, items]) => ({
+      lastHop,
+      heading: formatBlockIngressHeading(items[0]),
+      items: [...items].sort((a, b) => b.traffic_share - a.traffic_share),
+    }))
+    .sort((a, b) => {
+      const aTotal = a.items.reduce((sum, item) => sum + item.packet_count, 0);
+      const bTotal = b.items.reduce((sum, item) => sum + item.packet_count, 0);
+      return bTotal - aTotal || a.lastHop.localeCompare(b.lastHop);
+    });
+}
+
 function BlockPathCandidatesSection({ flood }: { flood: SpamCategoryFloodStatus }) {
   const candidates = flood.block_candidates ?? [];
   const combined = flood.block_candidates_combined_coverage;
+  const groupedCandidates = groupBlockCandidatesByLastHop(candidates);
 
   return (
     <div className="space-y-2 rounded-md border border-destructive/25 bg-background/60 px-3 py-2">
@@ -856,36 +894,40 @@ function BlockPathCandidatesSection({ flood }: { flood: SpamCategoryFloodStatus 
         )}
       </div>
       <p className="text-[0.8125rem] text-muted-foreground">
-        Frequent 2–3 hop stretches to block on repeaters. When paths share a local ingress hop, the
-        label shows which repeater heard them last. Refreshes about every 10 seconds during an
-        attack.
+        Frequent 2–3 hop stretches grouped by the local repeater that heard them last — the hop you
+        may be able to block on. Refreshes about every 10 seconds during an attack.
       </p>
       {candidates.length === 0 ? (
         <p className="text-xs text-muted-foreground">
           Not enough path data yet — this list updates as more packets arrive.
         </p>
       ) : (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {candidates.map((candidate, index) => (
-            <div
-              key={`${candidate.route}-${candidate.segment_len}-${index}`}
-              className="flex min-w-0 flex-col justify-between gap-2 rounded border border-border/60 bg-muted/20 px-2 py-1.5"
-            >
-              <div className="min-w-0">
-                <div className="font-mono text-sm leading-snug">
-                  {candidate.route_label || candidate.route}
-                </div>
-                <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">
-                  {candidate.segment_len}-hop segment
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="rounded bg-destructive/10 px-2 py-0.5 font-semibold text-destructive">
-                  {formatPercent(candidate.traffic_share)} of paths
-                </span>
-                <span className="text-muted-foreground">
-                  {candidate.packet_count} pkts · {candidate.occurrence_count}× seen
-                </span>
+        <div className="space-y-3">
+          {groupedCandidates.map((group) => (
+            <div key={group.lastHop} className="space-y-2">
+              <div className="font-mono text-sm font-semibold text-foreground">{group.heading}</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {group.items.map((candidate, index) => (
+                  <div
+                    key={`${group.lastHop}-${candidate.route}-${candidate.segment_len}-${index}`}
+                    className="flex min-w-0 flex-col justify-between gap-2 rounded border border-border/60 bg-muted/20 px-2 py-1.5"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono text-sm leading-snug">{candidate.route}</div>
+                      <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">
+                        {candidate.segment_len}-hop segment
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="rounded bg-destructive/10 px-2 py-0.5 font-semibold text-destructive">
+                        {formatPercent(candidate.traffic_share)} of paths
+                      </span>
+                      <span className="text-muted-foreground">
+                        {candidate.packet_count} pkts · {candidate.occurrence_count}× seen
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))}

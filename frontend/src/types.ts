@@ -455,6 +455,8 @@ export interface SpamBlockCandidate {
   source_name?: string | null;
   db_hop: string;
   db_name?: string | null;
+  last_hop?: string | null;
+  last_hop_name?: string | null;
   ingress_hints?: SpamBlockIngressHint[];
   packet_count: number;
   occurrence_count: number;

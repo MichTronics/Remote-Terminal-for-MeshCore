@@ -1034,7 +1034,8 @@ async def test_spam_live_tracker_exposes_block_candidates_during_flood(test_db):
     top = flood.block_candidates[0]
     assert top.hop_tokens == ["77", "AB"]
     assert top.route == "77 ⇢ AB"
-    assert "⇢ DB" in top.route_label
+    assert top.last_hop == "23"
+    assert "⇢ 23" in top.route_label
     assert top.source_hop == "AB"
     assert top.traffic_share >= 0.8
     assert flood.block_candidates_combined_coverage is not None

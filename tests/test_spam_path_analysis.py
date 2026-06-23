@@ -195,7 +195,8 @@ def test_rank_block_candidates_prefers_frequent_two_hop_segments():
     assert ranked
     assert ranked[0].hop_tokens == ("77", "AB")
     assert ranked[0].route == "77 ⇢ AB"
-    assert ranked[0].route_label == "77 ⇢ AB (AB ⇢ DB)"
+    assert ranked[0].route_label == "77 ⇢ AB"
+    assert ranked[0].last_hop is None
     assert ranked[0].source_hop == "AB"
     assert ranked[0].db_hop == "77"
     assert ranked[0].packet_count == 5
@@ -217,7 +218,24 @@ def test_rank_block_candidates_tracks_multiple_ingress_hops():
     top = next(item for item in ranked if item.hop_tokens == ("64", "B5"))
     ingress = {hint.hop: hint.packet_count for hint in top.ingress_hints}
     assert ingress == {"F6": 2, "AB": 3}
-    assert format_block_segment_label(top.hop_tokens) == "64 ⇢ B5 (B5 ⇢ DB)"
+    assert format_block_segment_label(top.hop_tokens) == "64 ⇢ B5"
+    assert format_block_segment_label(("64", "B5"), last_hop="A0") == "64 ⇢ B5 (B5 ⇢ A0)"
+
+
+def test_rank_block_candidates_uses_dominant_path_last_hop_in_label():
+    paths = [
+        ("C3", "91", "77", "AB", "F6"),
+        ("C3", "91", "77", "AB", "F6"),
+        ("C3", "91", "77", "AB", "F6"),
+        ("D1", "91", "77", "AB", "F6"),
+        ("E2", "91", "77", "AB", "F6"),
+        ("XX", "YY", "ZZ"),
+    ]
+    ranked, _combined = rank_block_candidates(paths, min_paths=5, min_packets=2, min_share=0.5)
+    top = ranked[0]
+    assert top.hop_tokens == ("77", "AB")
+    assert top.last_hop == "F6"
+    assert top.route_label == "77 ⇢ AB (AB ⇢ F6)"
 
 
 def test_rank_block_candidates_empty_until_enough_paths():

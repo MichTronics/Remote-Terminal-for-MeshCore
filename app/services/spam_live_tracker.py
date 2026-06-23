@@ -1083,6 +1083,7 @@ class SpamLiveTracker:
                 for hop in (
                     *item.hop_tokens,
                     *(hint.hop for hint in item.ingress_hints),
+                    *( [item.last_hop] if item.last_hop else [] ),
                 )
             )
         )
@@ -1099,6 +1100,8 @@ class SpamLiveTracker:
                 route_label=format_block_segment_label(
                     item.hop_tokens,
                     source_name=hop_names.get(item.source_hop),
+                    last_hop=item.last_hop,
+                    last_hop_name=hop_names.get(item.last_hop) if item.last_hop else None,
                 ),
                 hop_tokens=list(item.hop_tokens),
                 segment_len=item.segment_len,
@@ -1106,6 +1109,8 @@ class SpamLiveTracker:
                 source_name=hop_names.get(item.source_hop),
                 db_hop=item.db_hop,
                 db_name=hop_names.get(item.db_hop),
+                last_hop=item.last_hop,
+                last_hop_name=hop_names.get(item.last_hop) if item.last_hop else None,
                 ingress_hints=[
                     SpamBlockIngressHint(
                         hop=hint.hop,

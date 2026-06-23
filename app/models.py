@@ -582,21 +582,29 @@ class SpamBlockIngressHint(BaseModel):
 class SpamBlockCandidate(BaseModel):
     """Consecutive hop segment that may block a large share of flood traffic."""
 
-    route: str = Field(description="Segment hops with DB-to-source arrow, for example '64 ⇢ B5'")
+    route: str = Field(description="Segment hops in traversal order, for example '64 ⇢ B5'")
     route_label: str = Field(
-        description="Segment label with source-side hop annotated, for example '64 ⇢ B5 (Orinen ⇢ DB)'",
+        description="Segment label with local ingress hop when known, for example '64 ⇢ B5 (Orinen ⇢ F6)'",
     )
-    hop_tokens: list[str] = Field(description="Hop identifiers in traversal order (DB-side first)")
+    hop_tokens: list[str] = Field(description="Hop identifiers in traversal order")
     segment_len: int = Field(description="Number of consecutive hops in this segment (2 or 3)")
     source_hop: str = Field(description="Source-side hop at the end of the segment")
     source_name: str | None = Field(
         default=None,
         description="Resolved contact name for the source-side hop when known",
     )
-    db_hop: str = Field(description="DB-side hop at the start of the segment")
+    db_hop: str = Field(description="Radio-side hop at the start of the segment")
     db_name: str | None = Field(
         default=None,
-        description="Resolved contact name for the DB-side hop when known",
+        description="Resolved contact name for the radio-side hop when known",
+    )
+    last_hop: str | None = Field(
+        default=None,
+        description="Dominant final path hop (local ingress repeater) for paths carrying this segment",
+    )
+    last_hop_name: str | None = Field(
+        default=None,
+        description="Resolved contact name for the dominant final path hop when known",
     )
     ingress_hints: list[SpamBlockIngressHint] = Field(
         default_factory=list,

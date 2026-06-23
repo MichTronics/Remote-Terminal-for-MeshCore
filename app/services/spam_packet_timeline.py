@@ -98,6 +98,16 @@ def primary_category_from_counts(counts: dict[str, int]) -> str | None:
     )
 
 
+def _category_from_header_hex(header_hex: str | None) -> str:
+    if not header_hex:
+        return "other"
+    try:
+        header_value = int(header_hex, 16)
+    except ValueError:
+        return "other"
+    return classify_packet_header(header_value)
+
+
 class SpamPacketTimelineService:
     @staticmethod
     async def get_timeline(
@@ -114,12 +124,15 @@ class SpamPacketTimelineService:
         async with db.readonly() as conn:
             async with conn.execute(
                 """
-                SELECT timestamp, substr(data, 1, 1) AS header_byte
+                SELECT
+                    CAST(CAST(timestamp AS INTEGER) / ? AS INTEGER) * ? AS bucket_ts,
+                    substr(hex(data), 1, 2) AS header_hex,
+                    COUNT(*) AS packet_count
                 FROM raw_packets
                 WHERE timestamp >= ?
-                ORDER BY timestamp
+                GROUP BY bucket_ts, header_hex
                 """,
-                (since,),
+                (bucket_secs, bucket_secs, since),
             ) as cursor:
                 rows = await cursor.fetchall()
 
@@ -127,17 +140,12 @@ class SpamPacketTimelineService:
         totals_by_category: dict[str, int] = {key: 0 for key in CATEGORY_ORDER}
 
         for row in rows:
-            timestamp = int(row["timestamp"])
-            header_raw = row["header_byte"]
-            if header_raw is None or len(header_raw) < 1:
-                category = "other"
-            else:
-                category = classify_packet_header(header_raw[0])
-
-            bucket_ts = (timestamp // bucket_secs) * bucket_secs
+            bucket_ts = int(row["bucket_ts"])
+            category = _category_from_header_hex(row["header_hex"])
+            packet_count = int(row["packet_count"])
             counts = bucket_counts.setdefault(bucket_ts, {key: 0 for key in CATEGORY_ORDER})
-            counts[category] = counts.get(category, 0) + 1
-            totals_by_category[category] = totals_by_category.get(category, 0) + 1
+            counts[category] = counts.get(category, 0) + packet_count
+            totals_by_category[category] = totals_by_category.get(category, 0) + packet_count
 
         end_bucket = (now_ts // bucket_secs) * bucket_secs
         buckets: list[dict[str, Any]] = []

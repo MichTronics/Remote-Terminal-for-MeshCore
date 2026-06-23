@@ -1036,3 +1036,25 @@ async def test_spam_live_tracker_exposes_block_candidates_during_flood(test_db):
     assert top.traffic_share >= 0.8
     assert flood.block_candidates_combined_coverage is not None
     assert flood.block_candidates_combined_coverage >= 0.8
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_debounces_episode_progress_writes(test_db):
+    tracker = _make_tracker(packet_threshold=3, gateway_pubkeys=frozenset())
+    tracker.episode_progress_debounce_secs = 0.15
+    tracker.episode_progress_max_secs = 30.0
+    base = _test_base()
+
+    with patch(
+        "app.services.spam_live_tracker.SpamFloodEpisodeRepository.update_progress",
+        new_callable=AsyncMock,
+    ) as mock_update:
+        for offset in range(25):
+            await tracker.observe_and_maybe_alert(
+                category="request",
+                path_hex="AABBCC",
+                path_len=3,
+                observed_at=base + offset * 0.01,
+            )
+        await asyncio.sleep(0.35)
+        assert mock_update.call_count <= 2

@@ -86,6 +86,8 @@ class SpamLiveTracker:
     max_report_clusters: int = 0
     fluke_max_packets: int = 35
     fluke_max_duration_secs: int = 300
+    episode_progress_debounce_secs: float = 3.0
+    episode_progress_max_secs: float = 10.0
 
     _category_states: dict[str, CategoryFloodState] = field(default_factory=dict, init=False)
     _gateway_pubkeys: frozenset[str] = field(
@@ -96,6 +98,9 @@ class SpamLiveTracker:
     _repeater_start_dispatched: bool = field(default=False, init=False)
     _episode_watchdog_task: asyncio.Task[None] | None = field(default=None, init=False)
     _episode_lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _episode_progress_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
+    _episode_progress_last_persist_at: dict[str, float] = field(default_factory=dict, init=False)
+    _episode_progress_inflight: set[str] = field(default_factory=set, init=False)
 
     @property
     def gateway_pubkeys(self) -> frozenset[str]:
@@ -1340,14 +1345,59 @@ class SpamLiveTracker:
             logger.exception("Failed to close stale in-progress spam flood episodes")
 
     def _reset_episode_state(self, state: CategoryFloodState) -> None:
+        self._cancel_episode_progress_task(state.category)
+        self._episode_progress_last_persist_at.pop(state.category, None)
         state.reset_episode()
+
+    def _cancel_episode_progress_task(self, category: str) -> None:
+        task = self._episode_progress_tasks.pop(category, None)
+        if task is not None and not task.done():
+            task.cancel()
 
     def _schedule_episode_progress(self, state: CategoryFloodState) -> None:
         if state.episode_db_id is None:
             return
-        asyncio.create_task(self._persist_episode_progress(state))
+        category = state.category
+        current_time = time.time()
+        last_persist = self._episode_progress_last_persist_at.get(category, 0.0)
+        if current_time - last_persist >= self.episode_progress_max_secs:
+            self._cancel_episode_progress_task(category)
+            asyncio.create_task(self._persist_episode_progress(state))
+            return
+
+        self._cancel_episode_progress_task(category)
+        self._episode_progress_tasks[category] = asyncio.create_task(
+            self._debounced_persist_episode_progress(category)
+        )
+
+    async def _debounced_persist_episode_progress(self, category: str) -> None:
+        try:
+            await asyncio.sleep(self.episode_progress_debounce_secs)
+            state = self._category_state(category)
+            if state.episode_db_id is None:
+                return
+            await self._persist_episode_progress(state)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            current = asyncio.current_task()
+            if self._episode_progress_tasks.get(category) is current:
+                self._episode_progress_tasks.pop(category, None)
 
     async def _persist_episode_progress(self, state: CategoryFloodState) -> None:
+        if state.episode_db_id is None:
+            return
+        category = state.category
+        if category in self._episode_progress_inflight:
+            return
+        self._episode_progress_inflight.add(category)
+        try:
+            await self._persist_episode_progress_unlocked(state)
+            self._episode_progress_last_persist_at[category] = time.time()
+        finally:
+            self._episode_progress_inflight.discard(category)
+
+    async def _persist_episode_progress_unlocked(self, state: CategoryFloodState) -> None:
         if state.episode_db_id is None:
             return
         cluster_raw = self._cluster_packets(state)
@@ -1383,6 +1433,8 @@ class SpamLiveTracker:
             state.episode_open = False
         else:
             state.episode_open = False
+
+        self._cancel_episode_progress_task(state.category)
 
         episode_id = state.episode_db_id
         started_at = state.episode_started_at or int(current_time)

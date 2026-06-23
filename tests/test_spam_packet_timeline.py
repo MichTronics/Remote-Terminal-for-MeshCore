@@ -82,3 +82,23 @@ async def test_spam_packet_timeline_endpoint(client, test_db):
     payload = response.json()
     assert payload["total_packets"] >= 1
     assert "path" in payload["totals_by_category"]
+
+
+@pytest.mark.asyncio
+async def test_spam_packet_timeline_sql_aggregation_handles_many_rows(test_db):
+    now = 1_700_200_000
+    header = bytes([_header(0x01, 0x05)] + [0] * 8)
+    async with test_db.tx() as conn:
+        for offset in range(250):
+            await conn.execute(
+                "INSERT INTO raw_packets (timestamp, data) VALUES (?, ?)",
+                (now - 600 - offset, header),
+            )
+
+    result = await SpamPacketTimelineService.get_timeline(
+        window_hours=24,
+        bucket_minutes=30,
+        now=now,
+    )
+    assert result["total_packets"] == 250
+    assert result["totals_by_category"]["group_text"] == 250

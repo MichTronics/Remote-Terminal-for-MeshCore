@@ -25,20 +25,21 @@ CATEGORY_ORDER: tuple[str, ...] = (
     "other",
 )
 
+# Display names match Raw Packet Feed summaries (DM, GT, ACK, …).
 CATEGORY_LABELS: dict[str, str] = {
-    "pm_transport": "PM Transport",
-    "dm": "Direct DM",
-    "group_transport": "Group Text Transport",
-    "group_text": "Group Text",
+    "pm_transport": "DM",
+    "dm": "DM",
+    "group_transport": "GT",
+    "group_text": "GT",
     "request": "Request",
     "response": "Response",
     "path": "Path",
     "ack": "ACK",
     "advert": "Advert",
-    "anon_request": "Anon Request",
+    "anon_request": "AnonRequest",
     "trace": "Trace",
     "control": "Control",
-    "other": "Other",
+    "other": "Unknown",
 }
 
 _PAYLOAD_CATEGORY: dict[int, str] = {

@@ -24,6 +24,15 @@ def test_classify_packet_header_splits_transport_text_message():
     assert classify_packet_header(direct_dm) == "dm"
 
 
+def test_category_labels_match_raw_packet_feed_names():
+    assert CATEGORY_LABELS["pm_transport"] == "DM"
+    assert CATEGORY_LABELS["dm"] == "DM"
+    assert CATEGORY_LABELS["group_transport"] == "GT"
+    assert CATEGORY_LABELS["group_text"] == "GT"
+    assert CATEGORY_LABELS["ack"] == "ACK"
+    assert CATEGORY_LABELS["other"] == "Unknown"
+
+
 def test_classify_packet_header_splits_transport_group_text():
     transport_group = _header(route_type=0x03, payload_type=0x05)
     flood_group = _header(route_type=0x01, payload_type=0x05)

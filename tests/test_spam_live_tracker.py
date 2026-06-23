@@ -1004,3 +1004,35 @@ async def test_spam_live_tracker_splits_dual_sender_floods(test_db):
     labels = {cluster.flood_source_label for cluster in status.clusters}
     assert labels <= {"F0", "A1"}
     assert len(labels) == 2
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_exposes_block_candidates_during_flood(test_db):
+    tracker = _make_tracker(packet_threshold=5, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
+    base = _test_base()
+    shared_path = "77" + "AB" + "A0" + "23"
+    other_path = "C3" + "91" + "77"
+
+    for offset in range(8):
+        tracker.observe_packet(
+            category="group_text",
+            path_hex=shared_path,
+            path_len=4,
+            observed_at=base + offset,
+        )
+    for offset in range(8, 10):
+        tracker.observe_packet(
+            category="group_text",
+            path_hex=other_path,
+            path_len=3,
+            observed_at=base + offset,
+        )
+
+    status = await tracker.get_live_status()
+    flood = next(item for item in status.category_floods if item.category == "group_text")
+    assert flood.block_candidates
+    top = flood.block_candidates[0]
+    assert top.hop_tokens == ["77", "AB"]
+    assert top.traffic_share >= 0.8
+    assert flood.block_candidates_combined_coverage is not None
+    assert flood.block_candidates_combined_coverage >= 0.8

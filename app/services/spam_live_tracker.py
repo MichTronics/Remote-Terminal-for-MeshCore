@@ -9,7 +9,7 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.models import SpamCategoryFloodStatus, SpamFloodCluster, SpamLiveStatus
+from app.models import SpamBlockCandidate, SpamCategoryFloodStatus, SpamFloodCluster, SpamLiveStatus
 from app.path_utils import (
     hash_mode_from_hop_token,
     hop_allows_prefix_name_lookup,
@@ -47,6 +47,7 @@ from app.services.spam_path_analysis import (
     hop_suspect_score,
     nearest_named_chain_landmark,
     pick_nearest_coords_to_point,
+    rank_block_candidates,
     split_entry_partitioned_clusters,
     split_path_clusters,
     SourceFilterPlan,
@@ -1003,6 +1004,34 @@ class SpamLiveTracker:
             return dict(state.episode_likely_source)
         return self._empty_likely_source_fields()
 
+    def _block_candidates(self, state: CategoryFloodState) -> tuple[list[SpamBlockCandidate], float | None]:
+        if not state.active:
+            return [], None
+        records = self._clustering_records(state)
+        paths = [record.full_rf_path for record in records if record.full_rf_path]
+        if len(paths) < 5:
+            return [], None
+        ranked, combined_coverage = rank_block_candidates(
+            paths,
+            min_paths=5,
+            min_packets=2,
+            min_share=max(0.08, self.cluster_min_ratio * 0.5),
+        )
+        return (
+            [
+                SpamBlockCandidate(
+                    route=item.route,
+                    hop_tokens=list(item.hop_tokens),
+                    segment_len=item.segment_len,
+                    packet_count=item.packet_count,
+                    occurrence_count=item.occurrence_count,
+                    traffic_share=round(item.traffic_share, 4),
+                )
+                for item in ranked
+            ],
+            round(combined_coverage, 4) if combined_coverage is not None else None,
+        )
+
     async def _build_category_status_async(
         self,
         state: CategoryFloodState,
@@ -1041,6 +1070,8 @@ class SpamLiveTracker:
         else:
             likely_source = self._empty_likely_source_fields()
 
+        block_candidates, block_candidates_combined_coverage = self._block_candidates(state)
+
         return SpamCategoryFloodStatus(
             category=state.category,
             category_label=CATEGORY_LABELS.get(state.category, state.category),
@@ -1063,6 +1094,8 @@ class SpamLiveTracker:
             category_labels=category_labels,
             **self._source_filter_fields(state),
             **likely_source,
+            block_candidates=block_candidates,
+            block_candidates_combined_coverage=block_candidates_combined_coverage,
             clusters=enriched_clusters,
         )
 

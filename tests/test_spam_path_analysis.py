@@ -12,6 +12,7 @@ from app.services.spam_path_analysis import (
     estimate_origin_geo,
     hop_suspect_score,
     narrow_dominant_prefix,
+    rank_block_candidates,
     split_entry_partitioned_clusters,
     split_path_clusters,
 )
@@ -177,3 +178,28 @@ def test_build_one_byte_geo_hint_mentions_landmark_when_present():
 def test_build_one_byte_geo_hint_without_landmark():
     hint = build_one_byte_geo_hint("Orinen", "F6", 12.6, None)
     assert hint == "Orinen (F6) is ~13 km from the estimated source"
+
+
+def test_rank_block_candidates_prefers_frequent_two_hop_segments():
+    paths = [
+        ("C3", "91", "77", "AB", "A0"),
+        ("C3", "91", "77", "AB", "A0", "23"),
+        ("C3", "91", "77", "AB", "B4"),
+        ("C3", "91", "77", "AB", "43"),
+        ("C3", "91", "77", "AB", "BA"),
+        ("XX", "YY", "ZZ"),
+    ]
+    ranked, combined = rank_block_candidates(paths, min_paths=5, min_packets=2, min_share=0.5)
+    assert ranked
+    assert ranked[0].hop_tokens == ("77", "AB")
+    assert ranked[0].packet_count == 5
+    assert ranked[0].traffic_share == pytest.approx(5 / 6)
+    assert combined is not None
+    assert combined >= 5 / 6
+
+
+def test_rank_block_candidates_empty_until_enough_paths():
+    paths = [("77", "AB"), ("77", "AB")]
+    ranked, combined = rank_block_candidates(paths, min_paths=5)
+    assert ranked == []
+    assert combined is None

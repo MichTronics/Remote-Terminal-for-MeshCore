@@ -440,6 +440,15 @@ export interface SpamFloodCluster {
   flood_source_label?: string | null;
 }
 
+export interface SpamBlockCandidate {
+  route: string;
+  hop_tokens: string[];
+  segment_len: number;
+  packet_count: number;
+  occurrence_count: number;
+  traffic_share: number;
+}
+
 export interface SpamCategoryFloodStatus {
   category: string;
   category_label: string;
@@ -472,6 +481,8 @@ export interface SpamCategoryFloodStatus {
   source_filter_mode?: string | null;
   source_filter_excluded_packets?: number;
   source_filter_labels?: string[];
+  block_candidates?: SpamBlockCandidate[];
+  block_candidates_combined_coverage?: number | null;
   clusters: SpamFloodCluster[];
 }
 

@@ -816,6 +816,8 @@ function LiveCategoryFloodCard({ flood }: { flood: SpamCategoryFloodStatus }) {
         </p>
       )}
 
+      <BlockPathCandidatesSection flood={flood} />
+
       {flood.clusters.length === 0 ? (
         <p className="text-xs text-destructive/90">
           Flood volume is high, but no ingress hop reached the minimum share yet (
@@ -836,6 +838,57 @@ function LiveCategoryFloodCard({ flood }: { flood: SpamCategoryFloodStatus }) {
         </div>
       )}
     </section>
+  );
+}
+
+function BlockPathCandidatesSection({ flood }: { flood: SpamCategoryFloodStatus }) {
+  const candidates = flood.block_candidates ?? [];
+  const combined = flood.block_candidates_combined_coverage;
+
+  return (
+    <div className="space-y-2 rounded-md border border-destructive/25 bg-background/60 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold">Blockable path segments</h4>
+        {combined != null && combined > 0 && candidates.length >= 2 && (
+          <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-destructive">
+            Top 3 together ~{formatPercent(combined)} coverage
+          </span>
+        )}
+      </div>
+      <p className="text-[0.8125rem] text-muted-foreground">
+        Frequent 2–3 hop stretches seen in this episode. Blocking these on repeaters may cut most of
+        the flood as paths accumulate.
+      </p>
+      {candidates.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Not enough path data yet — this list updates as more packets arrive.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {candidates.map((candidate, index) => (
+            <div
+              key={`${candidate.route}-${candidate.segment_len}-${index}`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/60 bg-muted/20 px-2 py-1.5"
+            >
+              <div className="min-w-0">
+                <div className="font-mono text-sm">{candidate.route}</div>
+                <div className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">
+                  {candidate.segment_len}-hop segment
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="rounded bg-destructive/10 px-2 py-0.5 font-semibold text-destructive">
+                  {formatPercent(candidate.traffic_share)} of paths
+                </span>
+                <span className="text-muted-foreground">
+                  {candidate.packet_count} pkts · {candidate.occurrence_count}× seen
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

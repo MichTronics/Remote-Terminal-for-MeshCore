@@ -297,6 +297,129 @@ def format_route(hop_tokens: list[str] | tuple[str, ...]) -> str:
     return " -> ".join(hop_tokens)
 
 
+def path_contains_segment(path: tuple[str, ...], segment: tuple[str, ...]) -> bool:
+    """True when *segment* appears as consecutive hops inside *path*."""
+    if not segment or len(segment) > len(path):
+        return False
+    width = len(segment)
+    for index in range(len(path) - width + 1):
+        if path[index : index + width] == segment:
+            return True
+    return False
+
+
+def count_segment_occurrences(path: tuple[str, ...], segment: tuple[str, ...]) -> int:
+    if not segment or len(segment) > len(path):
+        return 0
+    width = len(segment)
+    return sum(1 for index in range(len(path) - width + 1) if path[index : index + width] == segment)
+
+
+@dataclass(frozen=True)
+class BlockCandidateSegment:
+    """A consecutive hop segment that appears often enough to consider blocking."""
+
+    hop_tokens: tuple[str, ...]
+    segment_len: int
+    route: str
+    packet_count: int
+    occurrence_count: int
+    traffic_share: float
+
+
+def greedy_combined_coverage(
+    paths: list[tuple[str, ...]],
+    segments: list[tuple[str, ...]],
+    *,
+    max_segments: int = 3,
+) -> tuple[float, list[tuple[str, ...]]]:
+    """Greedy union coverage when blocking up to *max_segments* path segments."""
+    if not paths or not segments or max_segments <= 0:
+        return 0.0, []
+
+    selected: list[tuple[str, ...]] = []
+    best_coverage = 0.0
+    remaining = list(segments)
+    for _ in range(max_segments):
+        best_segment: tuple[str, ...] | None = None
+        best_new_coverage = best_coverage
+        for segment in remaining:
+            trial = selected + [segment]
+            matched = sum(
+                1 for path in paths if any(path_contains_segment(path, part) for part in trial)
+            )
+            coverage = matched / len(paths)
+            if coverage > best_new_coverage:
+                best_new_coverage = coverage
+                best_segment = segment
+        if best_segment is None:
+            break
+        selected.append(best_segment)
+        remaining.remove(best_segment)
+        best_coverage = best_new_coverage
+    return best_coverage, selected
+
+
+def rank_block_candidates(
+    paths: list[tuple[str, ...]],
+    *,
+    segment_lengths: tuple[int, ...] = (2, 3),
+    min_paths: int = 5,
+    min_packets: int = 2,
+    min_share: float = 0.08,
+    max_results: int = 8,
+) -> tuple[list[BlockCandidateSegment], float | None]:
+    """Rank frequent 2- and 3-hop segments for repeater block rules.
+
+    Returns ranked candidates plus greedy combined coverage for the top picks.
+    """
+    filtered = [tuple(path) for path in paths if path]
+    total_paths = len(filtered)
+    if total_paths < min_paths:
+        return [], None
+
+    occurrence_counter: Counter[tuple[str, ...]] = Counter()
+    for path in filtered:
+        for segment_len in segment_lengths:
+            if segment_len < 2 or segment_len > len(path):
+                continue
+            for index in range(len(path) - segment_len + 1):
+                occurrence_counter[tuple(path[index : index + segment_len])] += 1
+
+    candidates: list[BlockCandidateSegment] = []
+    for segment, occurrence_count in occurrence_counter.items():
+        packet_count = sum(1 for path in filtered if path_contains_segment(path, segment))
+        share = packet_count / total_paths
+        if packet_count < min_packets or share < min_share:
+            continue
+        candidates.append(
+            BlockCandidateSegment(
+                hop_tokens=segment,
+                segment_len=len(segment),
+                route=format_route(segment),
+                packet_count=packet_count,
+                occurrence_count=occurrence_count,
+                traffic_share=share,
+            )
+        )
+
+    candidates.sort(
+        key=lambda item: (
+            -item.packet_count,
+            -item.occurrence_count,
+            item.segment_len,
+            item.route,
+        )
+    )
+    ranked = candidates[:max_results]
+    if not ranked:
+        return [], None
+
+    ordered_segments = [item.hop_tokens for item in ranked]
+    combined_coverage, _ = greedy_combined_coverage(filtered, ordered_segments, max_segments=3)
+    return ranked, combined_coverage if combined_coverage > 0 else None
+
+
 def narrow_dominant_prefix(
     paths: list[tuple[str, ...]],
     *,

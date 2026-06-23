@@ -10,7 +10,7 @@ from app.path_utils import parse_packet_envelope, split_path_hex
 DEFAULT_GATEWAY_PUBKEYS: tuple[str, ...] = (
     "1228d131fa4b13c78a7aefee124e5c7fe51a8555115220d64d1df749b5a7de8c",
     "753c3a558d71c52669cf59d67dd9be41725efd8af113b2f2f36925bde002f5b1",
-    "753c3a558d71c52669cf59d67dd9be41725efd8af113b2f2f36925bde002f5b1",
+    "db371c0634d23dd4dc72556366f6cd19578ac91eb85257ea259af8f8bb1d14e0",
     "6cfa92bb8d6270c0b2675047824352462c741aa9ce9c93bba777693a0bd5b972",
     "40b8bacb92538bdaa3d45abb759dd8cfcefaefc5a8f1e77d0f3dc6b7b5452429",
     "82e422e3a9d279d31df8794439dd92803db0658c9d6579cc717bbc0f266070dd",

@@ -571,6 +571,23 @@ class SpamRouteStatsResponse(BaseModel):
     routes: list[SpamRouteStat]
 
 
+class SpamBlockCandidate(BaseModel):
+    """Consecutive hop segment that may block a large share of flood traffic."""
+
+    route: str = Field(description="Display label, for example '77 -> AB'")
+    hop_tokens: list[str] = Field(description="Hop identifiers in traversal order")
+    segment_len: int = Field(description="Number of consecutive hops in this segment (2 or 3)")
+    packet_count: int = Field(
+        description="Episode paths that contain this consecutive segment",
+    )
+    occurrence_count: int = Field(
+        description="Total times this segment appears across all observed paths",
+    )
+    traffic_share: float = Field(
+        description="Share of episode paths that contain this segment",
+    )
+
+
 class SpamFloodCluster(BaseModel):
     """A live clustered ingress hotspot for coordinated packet floods."""
 
@@ -683,6 +700,14 @@ class SpamCategoryFloodStatus(BaseModel):
     source_filter_mode: str | None = None
     source_filter_excluded_packets: int = 0
     source_filter_labels: list[str] = Field(default_factory=list)
+    block_candidates: list[SpamBlockCandidate] = Field(
+        default_factory=list,
+        description="Frequent 2-3 hop segments suitable for repeater block rules",
+    )
+    block_candidates_combined_coverage: float | None = Field(
+        default=None,
+        description="Greedy union coverage when blocking up to three top segments",
+    )
     clusters: list[SpamFloodCluster] = Field(default_factory=list)
 
 

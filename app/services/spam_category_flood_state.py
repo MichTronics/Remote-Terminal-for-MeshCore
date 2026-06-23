@@ -50,3 +50,12 @@ class CategoryFloodState:
         self.block_candidates_cache = []
         self.block_candidates_combined_cache = None
         self.block_candidates_refreshed_at = 0.0
+
+    def ensure_block_candidate_cache(self) -> None:
+        """Backfill cache fields on in-memory states created before they existed."""
+        if not hasattr(self, "block_candidates_cache"):
+            self.block_candidates_cache = []
+        if not hasattr(self, "block_candidates_combined_cache"):
+            self.block_candidates_combined_cache = None
+        if not hasattr(self, "block_candidates_refreshed_at"):
+            self.block_candidates_refreshed_at = 0.0

@@ -337,5 +337,9 @@ class Database:
             raise RuntimeError("Database not connected")
         return self._connection
 
+    @property
+    def is_connected(self) -> bool:
+        return self._connection is not None
+
 
 db = Database(settings.database_path)

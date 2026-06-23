@@ -1042,6 +1042,54 @@ async def test_spam_live_tracker_exposes_block_candidates_during_flood(test_db):
 
 
 @pytest.mark.asyncio
+async def test_spam_live_tracker_shutdown_skips_episode_progress(test_db):
+    tracker = _make_tracker(packet_threshold=3, gateway_pubkeys=frozenset())
+    base = _test_base()
+    for offset in range(6):
+        await tracker.observe_and_maybe_alert(
+            category="request",
+            path_hex="AABBCC",
+            path_len=3,
+            observed_at=base + offset,
+            source_key="hash1:F0",
+            source_label="F0",
+        )
+
+    state = tracker._category_state("request")
+    state.episode_db_id = state.episode_db_id or 1
+
+    with patch(
+        "app.services.spam_live_tracker.SpamFloodEpisodeRepository.update_progress",
+        new_callable=AsyncMock,
+    ) as mock_update:
+        await tracker.shutdown()
+        await tracker._persist_episode_progress(state)
+        mock_update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_spam_live_tracker_block_candidates_legacy_state_without_cache_fields(test_db):
+    tracker = _make_tracker(packet_threshold=5, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
+    base = _test_base()
+    state = tracker._category_state("group_text")
+    for offset in range(8):
+        tracker.observe_packet(
+            category="group_text",
+            path_hex="77" + "AB" + "A0" + "23",
+            path_len=4,
+            observed_at=base + offset,
+        )
+    # Simulate an in-memory category state from before cache fields were added.
+    del state.block_candidates_cache
+    del state.block_candidates_combined_cache
+    del state.block_candidates_refreshed_at
+
+    status = await tracker.get_live_status()
+    flood = next(item for item in status.category_floods if item.category == "group_text")
+    assert flood.block_candidates
+
+
+@pytest.mark.asyncio
 async def test_spam_live_tracker_block_candidates_refresh_is_throttled(test_db):
     tracker = _make_tracker(packet_threshold=5, cluster_min_ratio=0.15, gateway_pubkeys=frozenset())
     tracker.block_candidates_refresh_secs = 60.0

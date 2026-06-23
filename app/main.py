@@ -176,6 +176,9 @@ async def lifespan(app: FastAPI):
     await stop_periodic_advert()
     await stop_periodic_sync()
     await stop_telemetry_collect()
+    from app.services.spam_live_tracker import spam_live_tracker
+
+    await spam_live_tracker.shutdown()
     if radio_manager.meshcore:
         await radio_manager.meshcore.stop_auto_message_fetching()
     await radio_manager.disconnect()

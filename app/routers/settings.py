@@ -120,6 +120,15 @@ class AppSettingsUpdate(BaseModel):
         le=168,
         description="Retention period for tracker location history in hours (1-168, default 12)",
     )
+    map_contact_max_days: int | None = Field(
+        default=None,
+        ge=1,
+        le=365,
+        description=(
+            "How many days back to show contacts with GPS on the Node Map "
+            "(display-only; does not delete data)"
+        ),
+    )
     spam_gateway_keys: str | None = Field(
         default=None,
         max_length=MAX_SPAM_GATEWAY_KEYS_LEN,
@@ -330,6 +339,10 @@ async def update_settings(update: AppSettingsUpdate) -> AppSettings:
     if update.tracker_history_hours is not None:
         logger.info("Updating tracker_history_hours to %d", update.tracker_history_hours)
         kwargs["tracker_history_hours"] = update.tracker_history_hours
+
+    if update.map_contact_max_days is not None:
+        logger.info("Updating map_contact_max_days to %d", update.map_contact_max_days)
+        kwargs["map_contact_max_days"] = update.map_contact_max_days
 
     if update.spam_gateway_keys is not None:
         kwargs["spam_gateway_keys"] = update.spam_gateway_keys.strip()

@@ -100,7 +100,7 @@ describe('MapView', () => {
     render(<MapView contacts={[contact]} focusedKey={contact.public_key} />);
 
     expect(
-      screen.getByText(/showing 1 contact heard in the last 3 days plus the focused contact/i)
+      screen.getByText(/showing 1 contact heard in the last 7 days plus the focused contact/i)
     ).toBeInTheDocument();
     expect(screen.getByText('Last heard: Never heard by this server')).toBeInTheDocument();
   });
@@ -173,7 +173,7 @@ describe('MapView', () => {
     expect(screen.getByText('Static')).toBeInTheDocument();
   });
 
-  it('keeps the 3-day packet-window cutoff stable for the lifetime of the mounted map', () => {
+  it('keeps the 7-day contact-window cutoff stable for the lifetime of the mounted map', () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
@@ -192,7 +192,7 @@ describe('MapView', () => {
         last_advert: null,
         lat: 41,
         lon: -73,
-        last_seen: Math.floor(Date.now() / 1000) - 3 * 24 * 60 * 60 + 60,
+        last_seen: Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60 + 60,
         on_radio: false,
         favorite: false,
         last_contacted: null,
@@ -205,15 +205,141 @@ describe('MapView', () => {
 
       const { rerender } = render(<MapView contacts={[contact]} focusedKey={null} />);
 
-      expect(screen.getByText(/showing 1 contact heard in the last 3 days/i)).toBeInTheDocument();
+      expect(screen.getByText(/showing 1 contact heard in the last 7 days/i)).toBeInTheDocument();
 
       vi.advanceTimersByTime(2 * 60 * 1000);
       rerender(<MapView contacts={[contact]} focusedKey={null} />);
 
-      expect(screen.getByText(/showing 1 contact heard in the last 3 days/i)).toBeInTheDocument();
+      expect(screen.getByText(/showing 1 contact heard in the last 7 days/i)).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('shows the same contacts when live traffic is toggled on or off', () => {
+    const recent: Contact = {
+      public_key: 'aa'.repeat(32),
+      name: 'Recent',
+      type: 1,
+      flags: 0,
+      direct_path: null,
+      direct_path_len: -1,
+      direct_path_hash_mode: -1,
+      route_override_path: null,
+      route_override_len: null,
+      route_override_hash_mode: null,
+      last_advert: null,
+      lat: 40,
+      lon: -74,
+      last_seen: Math.floor(Date.now() / 1000),
+      on_radio: false,
+      favorite: false,
+      last_contacted: null,
+      last_read_at: null,
+      first_seen: null,
+      is_tracker: false,
+      tracker_name: null,
+      tracker_heading: null,
+    };
+    const older: Contact = {
+      public_key: 'bb'.repeat(32),
+      name: 'FourDaysAgo',
+      type: 2,
+      flags: 0,
+      direct_path: null,
+      direct_path_len: -1,
+      direct_path_hash_mode: -1,
+      route_override_path: null,
+      route_override_len: null,
+      route_override_hash_mode: null,
+      last_advert: null,
+      lat: 41,
+      lon: -73,
+      last_seen: Math.floor(Date.now() / 1000) - 4 * 24 * 60 * 60,
+      on_radio: false,
+      favorite: false,
+      last_contacted: null,
+      last_read_at: null,
+      first_seen: null,
+      is_tracker: false,
+      tracker_name: null,
+      tracker_heading: null,
+    };
+
+    render(<MapView contacts={[recent, older]} />);
+
+    expect(screen.getByText(/showing 2 contacts heard in the last 7 days/i)).toBeInTheDocument();
+    expect(screen.getByText('Recent')).toBeInTheDocument();
+    expect(screen.getByText('FourDaysAgo')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /live traffic/i }));
+
+    expect(screen.getByText(/showing 2 contacts heard in the last 7 days/i)).toBeInTheDocument();
+    expect(screen.getByText('Recent')).toBeInTheDocument();
+    expect(screen.getByText('FourDaysAgo')).toBeInTheDocument();
+  });
+
+  it('respects mapContactMaxDays for contact visibility', () => {
+    const recent: Contact = {
+      public_key: 'aa'.repeat(32),
+      name: 'Recent',
+      type: 1,
+      flags: 0,
+      direct_path: null,
+      direct_path_len: -1,
+      direct_path_hash_mode: -1,
+      route_override_path: null,
+      route_override_len: null,
+      route_override_hash_mode: null,
+      last_advert: null,
+      lat: 40,
+      lon: -74,
+      last_seen: Math.floor(Date.now() / 1000),
+      on_radio: false,
+      favorite: false,
+      last_contacted: null,
+      last_read_at: null,
+      first_seen: null,
+      is_tracker: false,
+      tracker_name: null,
+      tracker_heading: null,
+    };
+    const tenDaysAgo: Contact = {
+      public_key: 'bb'.repeat(32),
+      name: 'TenDaysAgo',
+      type: 2,
+      flags: 0,
+      direct_path: null,
+      direct_path_len: -1,
+      direct_path_hash_mode: -1,
+      route_override_path: null,
+      route_override_len: null,
+      route_override_hash_mode: null,
+      last_advert: null,
+      lat: 41,
+      lon: -73,
+      last_seen: Math.floor(Date.now() / 1000) - 10 * 24 * 60 * 60,
+      on_radio: false,
+      favorite: false,
+      last_contacted: null,
+      last_read_at: null,
+      first_seen: null,
+      is_tracker: false,
+      tracker_name: null,
+      tracker_heading: null,
+    };
+
+    const { rerender } = render(
+      <MapView contacts={[recent, tenDaysAgo]} mapContactMaxDays={7} />
+    );
+
+    expect(screen.getByText(/showing 1 contact heard in the last 7 days/i)).toBeInTheDocument();
+    expect(screen.queryByText('TenDaysAgo')).toBeNull();
+
+    rerender(<MapView contacts={[recent, tenDaysAgo]} mapContactMaxDays={14} />);
+
+    expect(screen.getByText(/showing 2 contacts heard in the last 14 days/i)).toBeInTheDocument();
+    expect(screen.getByText('TenDaysAgo')).toBeInTheDocument();
   });
 
   it('excludes contacts whose public key is in blockedKeys', () => {

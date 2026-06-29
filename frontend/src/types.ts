@@ -653,6 +653,7 @@ export interface AppSettings {
   auto_resend_channel: boolean;
   telemetry_interval_hours: number;
   telemetry_routed_hourly: boolean;
+  map_contact_max_days: number;
   spam_gateway_keys: string;
   spam_live_window_secs: number;
   spam_live_packet_threshold: number;
@@ -681,6 +682,7 @@ export interface AppSettingsUpdate {
   discovery_blocked_types?: number[];
   telemetry_interval_hours?: number;
   telemetry_routed_hourly?: boolean;
+  map_contact_max_days?: number;
   spam_gateway_keys?: string;
   spam_live_window_secs?: number;
   spam_live_packet_threshold?: number;

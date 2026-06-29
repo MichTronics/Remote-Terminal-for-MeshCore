@@ -1391,6 +1391,15 @@ class AppSettings(BaseModel):
         le=168,
         description="Tracker location history retention window in hours (1-168, default 12)",
     )
+    map_contact_max_days: int = Field(
+        default=7,
+        ge=1,
+        le=365,
+        description=(
+            "How many days back to show contacts with GPS on the Node Map. "
+            "Display-only; does not delete stored contacts."
+        ),
+    )
     spam_gateway_keys: str = Field(
         default="",
         description=(

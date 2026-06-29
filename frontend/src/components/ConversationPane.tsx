@@ -98,6 +98,7 @@ interface ConversationPaneProps {
   onClearRepeaterAutoLogin: () => void;
   blockedKeys?: string[];
   blockedNames?: string[];
+  mapContactMaxDays?: number;
   spamLiveStatus?: SpamLiveStatus | null;
   onSpamLiveStatusChange?: (status: SpamLiveStatus) => void;
 }
@@ -182,6 +183,7 @@ export function ConversationPane({
   onClearRepeaterAutoLogin,
   blockedKeys,
   blockedNames,
+  mapContactMaxDays,
   spamLiveStatus,
   onSpamLiveStatusChange,
 }: ConversationPaneProps) {
@@ -231,6 +233,7 @@ export function ConversationPane({
               config={config}
               blockedKeys={blockedKeys}
               blockedNames={blockedNames}
+              mapContactMaxDays={mapContactMaxDays}
               onSelectContact={(contact) =>
                 onSelectConversation({
                   type: 'contact',

@@ -22,6 +22,7 @@ export function SettingsDatabaseSection({
   className?: string;
 }) {
   const [retentionDays, setRetentionDays] = useState('14');
+  const [mapContactMaxDays, setMapContactMaxDays] = useState('7');
   const [cleaning, setCleaning] = useState(false);
   const [purgingDecryptedRaw, setPurgingDecryptedRaw] = useState(false);
   const [autoDecryptOnAdvert, setAutoDecryptOnAdvert] = useState(false);
@@ -30,6 +31,7 @@ export function SettingsDatabaseSection({
 
   useEffect(() => {
     setAutoDecryptOnAdvert(appSettings.auto_decrypt_dm_on_advert);
+    setMapContactMaxDays(String(appSettings.map_contact_max_days ?? 7));
   }, [appSettings]);
 
   const handleCleanup = async () => {
@@ -94,6 +96,25 @@ export function SettingsDatabaseSection({
     return chained;
   };
 
+  const saveMapContactMaxDays = () => {
+    const days = parseInt(mapContactMaxDays, 10);
+    if (isNaN(days) || days < 1 || days > 365) {
+      toast.error('Invalid map contact days', {
+        description: 'Enter a whole number between 1 and 365',
+      });
+      setMapContactMaxDays(String(appSettings.map_contact_max_days ?? 7));
+      return;
+    }
+    if (days === (appSettings.map_contact_max_days ?? 7)) {
+      return;
+    }
+    const prev = appSettings.map_contact_max_days ?? 7;
+    setMapContactMaxDays(String(days));
+    void persistAppSettings({ map_contact_max_days: days }, () =>
+      setMapContactMaxDays(String(prev))
+    );
+  };
+
   return (
     <div className={className}>
       {/* ── Database Overview ── */}
@@ -117,6 +138,63 @@ export function SettingsDatabaseSection({
             ) : (
               <span className="text-sm text-muted-foreground">None</span>
             )}
+          </div>
+        </div>
+      </div>
+
+      <Separator />
+
+      {/* ── Node Map ── */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold tracking-tight">Node Map</h3>
+        <div className="rounded-md border border-border p-3 space-y-2">
+          <h4 className="text-sm font-semibold">Contact visibility window</h4>
+          <p className="text-[0.8125rem] text-muted-foreground">
+            Contacts heard within this many days appear on the Node Map. Older contacts stay in the
+            database; this only controls map display.
+          </p>
+          <div className="flex flex-wrap gap-2 items-end">
+            <div className="space-y-1">
+              <Label htmlFor="map-contact-max-days" className="text-xs text-muted-foreground">
+                Max days on map
+              </Label>
+              <Input
+                id="map-contact-max-days"
+                type="number"
+                min="1"
+                max="365"
+                value={mapContactMaxDays}
+                onChange={(e) => setMapContactMaxDays(e.target.value)}
+                onBlur={saveMapContactMaxDays}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="w-24"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5 pb-0.5">
+              {[3, 7, 14, 30].map((preset) => (
+                <Button
+                  key={preset}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs"
+                  onClick={() => {
+                    if (preset === (appSettings.map_contact_max_days ?? 7)) return;
+                    const prev = appSettings.map_contact_max_days ?? 7;
+                    setMapContactMaxDays(String(preset));
+                    void persistAppSettings({ map_contact_max_days: preset }, () =>
+                      setMapContactMaxDays(String(prev))
+                    );
+                  }}
+                >
+                  {preset}d
+                </Button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

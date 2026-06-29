@@ -45,7 +45,7 @@ class AppSettingsRepository:
                    tracked_telemetry_repeaters, tracked_telemetry_contacts,
                    auto_resend_channel,
                    telemetry_interval_hours, telemetry_routed_hourly,
-                   tracker_history_hours,
+                   tracker_history_hours, map_contact_max_days,
                    spam_gateway_keys,
                    spam_live_window_secs, spam_live_packet_threshold,
                    spam_live_cluster_min_ratio, spam_live_broadcast_cooldown_secs,
@@ -149,6 +149,12 @@ class AppSettingsRepository:
             tracker_history_hours = 12
 
         try:
+            raw_map_days = row["map_contact_max_days"]
+            map_contact_max_days = int(raw_map_days) if raw_map_days is not None else 7
+        except (KeyError, TypeError, ValueError):
+            map_contact_max_days = 7
+
+        try:
             spam_flood_automation_enabled = bool(row["spam_flood_automation_enabled"])
         except (KeyError, TypeError):
             spam_flood_automation_enabled = False
@@ -242,6 +248,7 @@ class AppSettingsRepository:
             telemetry_interval_hours=telemetry_interval_hours,
             telemetry_routed_hourly=telemetry_routed_hourly,
             tracker_history_hours=tracker_history_hours,
+            map_contact_max_days=map_contact_max_days,
             spam_gateway_keys=spam_gateway_keys,
             spam_live_window_secs=spam_live_window_secs,
             spam_live_packet_threshold=spam_live_packet_threshold,
@@ -278,6 +285,7 @@ class AppSettingsRepository:
         telemetry_interval_hours: int | None = None,
         telemetry_routed_hourly: bool | None = None,
         tracker_history_hours: int | None = None,
+        map_contact_max_days: int | None = None,
         spam_gateway_keys: str | None = None,
         spam_live_window_secs: int | None = None,
         spam_live_packet_threshold: int | None = None,
@@ -361,6 +369,10 @@ class AppSettingsRepository:
         if tracker_history_hours is not None:
             updates.append("tracker_history_hours = ?")
             params.append(tracker_history_hours)
+
+        if map_contact_max_days is not None:
+            updates.append("map_contact_max_days = ?")
+            params.append(map_contact_max_days)
 
         if spam_gateway_keys is not None:
             updates.append("spam_gateway_keys = ?")
@@ -453,6 +465,7 @@ class AppSettingsRepository:
         telemetry_interval_hours: int | None = None,
         telemetry_routed_hourly: bool | None = None,
         tracker_history_hours: int | None = None,
+        map_contact_max_days: int | None = None,
         spam_gateway_keys: str | None = None,
         spam_live_window_secs: int | None = None,
         spam_live_packet_threshold: int | None = None,
@@ -488,6 +501,7 @@ class AppSettingsRepository:
                 telemetry_interval_hours=telemetry_interval_hours,
                 telemetry_routed_hourly=telemetry_routed_hourly,
                 tracker_history_hours=tracker_history_hours,
+                map_contact_max_days=map_contact_max_days,
                 spam_gateway_keys=spam_gateway_keys,
                 spam_live_window_secs=spam_live_window_secs,
                 spam_live_packet_threshold=spam_live_packet_threshold,

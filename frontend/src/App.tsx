@@ -699,6 +699,7 @@ export function App() {
     onClearRepeaterAutoLogin: () => setRepeaterAutoLoginKey(null),
     blockedKeys: appSettings?.blocked_keys,
     blockedNames: appSettings?.blocked_names,
+    mapContactMaxDays: appSettings?.map_contact_max_days ?? 7,
     spamLiveStatus,
     onSpamLiveStatusChange: setSpamLiveStatus,
   };

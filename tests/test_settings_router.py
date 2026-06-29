@@ -55,6 +55,19 @@ class TestUpdateSettings:
         assert result.max_radio_contacts == 200  # default
 
     @pytest.mark.asyncio
+    async def test_map_contact_max_days_round_trip(self, test_db):
+        result = await update_settings(AppSettingsUpdate(map_contact_max_days=14))
+        assert result.map_contact_max_days == 14
+
+        fresh = await AppSettingsRepository.get()
+        assert fresh.map_contact_max_days == 14
+
+    @pytest.mark.asyncio
+    async def test_map_contact_max_days_defaults_to_seven(self, test_db):
+        settings = await AppSettingsRepository.get()
+        assert settings.map_contact_max_days == 7
+
+    @pytest.mark.asyncio
     async def test_flood_scope_round_trip(self, test_db):
         """Flood scope should be saved and retrieved correctly."""
         result = await update_settings(AppSettingsUpdate(flood_scope="MyRegion"))

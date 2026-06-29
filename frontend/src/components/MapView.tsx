@@ -57,6 +57,8 @@ interface MapViewProps {
   config?: RadioConfig | null;
   blockedKeys?: string[];
   blockedNames?: string[];
+  /** Contacts heard within this many days are shown on the map (default 7). */
+  mapContactMaxDays?: number;
   /** When provided, the contact name in each popup becomes a clickable link
    *  that opens the conversation for that contact (DM, repeater, or room). */
   onSelectContact?: (contact: Contact) => void;
@@ -804,9 +806,13 @@ export function MapView({
   config,
   blockedKeys,
   blockedNames,
+  mapContactMaxDays = 7,
   onSelectContact,
 }: MapViewProps) {
-  const [sevenDaysAgo] = useState(() => Date.now() / 1000 - 7 * 24 * 60 * 60);
+  const contactRecencyCutoffSec = useMemo(
+    () => Date.now() / 1000 - mapContactMaxDays * 24 * 60 * 60,
+    [mapContactMaxDays]
+  );
   const [selectedLayerId, setSelectedLayerId] = useState<string>(getSavedLayerId);
   const activeLayer = TILE_LAYERS.find((l) => l.id === selectedLayerId) ?? TILE_LAYERS[0];
 
@@ -1005,7 +1011,9 @@ export function MapView({
   // Determine time window for packet visualization
   const threeDaysAgoSec = useMemo(() => Date.now() / 1000 - THREE_DAYS_SEC, []);
 
-  // Filter contacts for map display
+  // Filter contacts for map display. Live-traffic toggle does not change which nodes
+  // appear — only packet animation. Node set follows stored contacts within the
+  // configured recency window, with marker opacity from age via getMarkerStaleOpacity.
   const mappableContacts = useMemo(() => {
     const isBlocked = (c: Contact) =>
       (blockedKeys?.length && blockedKeys.includes(c.public_key.toLowerCase())) ||
@@ -1017,26 +1025,17 @@ export function MapView({
         (c) => isValidLocation(c.lat, c.lon) && discoveredKeys.has(c.public_key) && !isBlocked(c)
       );
     }
-    if (showPackets) {
-      // Packet mode: show only last 3 days
-      return contacts.filter(
-        (c) =>
-          isValidLocation(c.lat, c.lon) &&
-          !isBlocked(c) &&
-          (c.public_key === focusedKey || (c.last_seen != null && c.last_seen > threeDaysAgoSec))
-      );
-    }
     return contacts.filter(
       (c) =>
         isValidLocation(c.lat, c.lon) &&
         !isBlocked(c) &&
-        (c.public_key === focusedKey || (c.last_seen != null && c.last_seen > sevenDaysAgo))
+        (c.public_key === focusedKey ||
+          (c.last_seen != null && c.last_seen > contactRecencyCutoffSec))
     );
   }, [
     contacts,
     focusedKey,
-    sevenDaysAgo,
-    threeDaysAgoSec,
+    contactRecencyCutoffSec,
     showPackets,
     discoveryMode,
     discoveredKeys,
@@ -1180,7 +1179,9 @@ export function MapView({
   const includesFocusedOutsideWindow =
     focusedContact != null &&
     (focusedContact.last_seen == null ||
-      focusedContact.last_seen <= (showPackets ? threeDaysAgoSec : sevenDaysAgo));
+      focusedContact.last_seen <= contactRecencyCutoffSec);
+
+  const mapRecencyDayLabel = mapContactMaxDays === 1 ? 'day' : 'days';
 
   // Gather unique link paths for static route lines when packet viz is on
   const routeLines = useMemo(() => {
@@ -1198,11 +1199,10 @@ export function MapView({
     return lines;
   }, [showPackets, particles]);
 
-  const timeWindowLabel = showPackets ? '3 days' : '7 days';
   const infoLabel =
     showPackets && discoveryMode
       ? `${mappableContacts.length} node${mappableContacts.length !== 1 ? 's' : ''} discovered from live traffic`
-      : `Showing ${mappableContacts.length} contact${mappableContacts.length !== 1 ? 's' : ''} heard in the last ${timeWindowLabel}${includesFocusedOutsideWindow ? ' plus the focused contact' : ''}`;
+      : `Showing ${mappableContacts.length} contact${mappableContacts.length !== 1 ? 's' : ''} heard in the last ${mapContactMaxDays} ${mapRecencyDayLabel}${includesFocusedOutsideWindow ? ' plus the focused contact' : ''}`;
 
   return (
     <div className="flex flex-col h-full">

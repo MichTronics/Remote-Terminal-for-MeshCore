@@ -74,6 +74,7 @@ const baseSettings: AppSettings = {
   auto_resend_channel: false,
   telemetry_interval_hours: 8,
   telemetry_routed_hourly: false,
+  map_contact_max_days: 7,
   spam_gateway_keys: '',
   spam_live_window_secs: 30,
   spam_live_packet_threshold: 15,
@@ -892,5 +893,18 @@ describe('SettingsModal', () => {
 
     expect(screen.getByText('DirectRepeater')).toBeInTheDocument();
     expect(screen.getByText('direct')).toBeInTheDocument();
+  });
+
+  it('saves map contact max days from the database section', async () => {
+    const { onSaveAppSettings } = renderModal();
+    openDatabaseSection();
+
+    const input = await screen.findByLabelText(/max days on map/i);
+    fireEvent.change(input, { target: { value: '14' } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(onSaveAppSettings).toHaveBeenCalledWith({ map_contact_max_days: 14 });
+    });
   });
 });
